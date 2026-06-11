@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { HashRouter, Routes, Route } from 'react-router-dom';
 import { AppProvider } from './context/AppContext';
 import Navbar from './components/Navbar';
 import Scripts from './pages/Scripts';
@@ -9,7 +9,7 @@ import Settings from './pages/Settings';
 export default function App() {
   return (
     <AppProvider>
-      <BrowserRouter>
+      <HashRouter>
         <div className="min-h-screen bg-[#0f0f0f] text-gray-100">
           <Navbar />
           <Routes>
@@ -19,7 +19,7 @@ export default function App() {
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </div>
-      </BrowserRouter>
+      </HashRouter>
     </AppProvider>
   );
 }
