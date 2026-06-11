@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0f0f0f;
+  --color-accent: #7c3aed;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #0f0f0f;
+  color: #e5e5e5;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
