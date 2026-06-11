@@ -56,18 +56,21 @@ export default function Settings() {
               value={form.anthropicApiKey}
               onChange={(v) => update('anthropicApiKey', v)}
               placeholder="sk-ant-..."
+              secret
             />
             <Field
               label="Kling API Key"
               value={form.klingApiKey}
               onChange={(v) => update('klingApiKey', v)}
               placeholder="kling-..."
+              secret
             />
             <Field
               label="ElevenLabs API Key"
               value={form.elevenLabsApiKey}
               onChange={(v) => update('elevenLabsApiKey', v)}
               placeholder="el-..."
+              secret
             />
           </div>
         </section>
@@ -138,12 +141,14 @@ export default function Settings() {
               value={form.youtubeClientId}
               onChange={(v) => update('youtubeClientId', v)}
               placeholder="xxxx.apps.googleusercontent.com"
+              secret
             />
             <Field
               label="Google OAuth Client Secret"
               value={form.youtubeClientSecret}
               onChange={(v) => update('youtubeClientSecret', v)}
               placeholder="optional, not used in implicit flow"
+              secret
             />
             <button
               onClick={handleConnectYouTube}
@@ -196,17 +201,19 @@ function Field({
   value,
   onChange,
   placeholder,
+  secret = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  secret?: boolean;
 }) {
   return (
     <label className="flex flex-col gap-1.5">
       <span className="text-sm font-medium text-gray-200">{label}</span>
       <input
-        type="password"
+        type={secret ? 'password' : 'text'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
