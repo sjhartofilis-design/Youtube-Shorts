@@ -6,7 +6,7 @@ import { findStockClip } from '../api/pexels';
 import { generateVoiceover } from '../api/elevenlabs';
 import { buildFinalVideo } from '../api/ffmpeg';
 import { uploadShort } from '../api/youtube';
-import { estimateNarrationSeconds } from '../utils/narration';
+import { getAudioDuration } from '../utils/narration';
 import StatusBadge from './StatusBadge';
 
 const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
@@ -21,7 +21,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   const [scheduledTime, setScheduledTime] = useState('');
 
   const fetchClips = async (rank: number): Promise<StockClip[]> => {
-    const totalDuration = estimateNarrationSeconds(item.narration);
+    const totalDuration = item.audioDuration ?? 0;
     const queries = item.stock_search_queries;
     const segmentDuration = totalDuration / queries.length;
 
@@ -40,6 +40,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   };
 
   const handleGenerateVideo = async (rank = 0) => {
+    if (!item.audioDuration) return;
     updateQueueItem(item.id, { videoStatus: 'generating', videoError: undefined });
     try {
       const clips = await fetchClips(rank);
@@ -68,9 +69,13 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         item.category === 'space' ? settings.voiceStyleSpace : settings.voiceStyleAncientCiv;
       const voiceId = VOICE_ID_MAP[voiceStyle];
       const audioUrl = await generateVoiceover(settings.elevenLabsApiKey, voiceId, item.narration);
+      const audioDuration = await getAudioDuration(audioUrl);
       updateQueueItem(item.id, {
         voiceoverStatus: 'ready',
         audioUrl,
+        audioDuration,
+        videoStatus: 'idle',
+        clips: undefined,
         processStatus: 'not_processed',
         finalVideoUrl: undefined,
         processError: undefined,
@@ -84,10 +89,10 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   };
 
   const handleProcess = async () => {
-    if (!item.clips?.length || !item.audioUrl) return;
+    if (!item.clips?.length || !item.audioUrl || !item.audioDuration) return;
     updateQueueItem(item.id, { processStatus: 'processing', processError: undefined });
     try {
-      const finalVideoUrl = await buildFinalVideo(item.clips, item.audioUrl);
+      const finalVideoUrl = await buildFinalVideo(item.clips, item.audioUrl, item.audioDuration);
       updateQueueItem(item.id, { processStatus: 'ready', finalVideoUrl });
     } catch (err) {
       updateQueueItem(item.id, {
@@ -183,12 +188,54 @@ export default function QueueCard({ item }: { item: QueueItem }) {
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {/* Video */}
+        {/* Voiceover */}
         <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white">Stock Clips</span>
+            <span className="text-sm font-medium text-white">Voiceover</span>
+            <StatusBadge status={item.voiceoverStatus} />
+          </div>
+          {item.voiceoverStatus === 'ready' && item.audioUrl && (
+            <div className="flex flex-col gap-1">
+              <audio src={item.audioUrl} controls className="w-full" />
+              {item.audioDuration && (
+                <p className="text-xs text-gray-500">{item.audioDuration.toFixed(1)}s</p>
+              )}
+              <a
+                href={item.audioUrl}
+                download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}.mp3`}
+                className="text-xs text-violet-400 hover:underline"
+              >
+                Download MP3
+              </a>
+            </div>
+          )}
+          {item.voiceoverStatus === 'error' && (
+            <p className="text-xs text-red-400">{item.voiceoverError}</p>
+          )}
+          <button
+            onClick={handleGenerateVoiceover}
+            disabled={item.voiceoverStatus === 'generating'}
+            className="mt-auto rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+          >
+            {item.voiceoverStatus === 'error'
+              ? 'Retry'
+              : item.voiceoverStatus === 'ready'
+                ? 'Regenerate Voiceover'
+                : 'Generate Voiceover'}
+          </button>
+        </div>
+
+        {/* Video Clips */}
+        <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-white">Video Clips</span>
             <StatusBadge status={item.videoStatus} />
           </div>
+          {item.voiceoverStatus !== 'ready' && (
+            <p className="text-xs text-gray-500">
+              Generate the voiceover first to determine clip lengths.
+            </p>
+          )}
           {item.videoStatus === 'generating' && (
             <p className="text-xs text-gray-500">Searching Pexels and downloading clips…</p>
           )}
@@ -217,7 +264,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
           <div className="mt-auto flex flex-col gap-2">
             <button
               onClick={() => handleGenerateVideo(0)}
-              disabled={item.videoStatus === 'generating'}
+              disabled={item.voiceoverStatus !== 'ready' || item.videoStatus === 'generating'}
               className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
             >
               {item.videoStatus === 'error'
@@ -235,40 +282,6 @@ export default function QueueCard({ item }: { item: QueueItem }) {
               </button>
             )}
           </div>
-        </div>
-
-        {/* Voiceover */}
-        <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white">Voiceover</span>
-            <StatusBadge status={item.voiceoverStatus} />
-          </div>
-          {item.voiceoverStatus === 'ready' && item.audioUrl && (
-            <div className="flex flex-col gap-1">
-              <audio src={item.audioUrl} controls className="w-full" />
-              <a
-                href={item.audioUrl}
-                download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}.mp3`}
-                className="text-xs text-violet-400 hover:underline"
-              >
-                Download MP3
-              </a>
-            </div>
-          )}
-          {item.voiceoverStatus === 'error' && (
-            <p className="text-xs text-red-400">{item.voiceoverError}</p>
-          )}
-          <button
-            onClick={handleGenerateVoiceover}
-            disabled={item.voiceoverStatus === 'generating'}
-            className="mt-auto rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-          >
-            {item.voiceoverStatus === 'error'
-              ? 'Retry'
-              : item.voiceoverStatus === 'ready'
-                ? 'Regenerate Voiceover'
-                : 'Generate Voiceover'}
-          </button>
         </div>
 
         {/* Post to YouTube */}

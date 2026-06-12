@@ -9,7 +9,7 @@ const STYLES: Record<TaskStatus, string> = {
 };
 
 const LABELS: Record<TaskStatus, string> = {
-  idle: 'Idle',
+  idle: 'Pending',
   pending: 'Pending',
   generating: 'Generating',
   ready: 'Ready',

@@ -23,9 +23,14 @@ async function getFFmpeg(): Promise<FFmpeg> {
 /**
  * Trims each Pexels clip to its calculated segment length, concatenates them
  * in sequence, mutes their audio, and merges in the ElevenLabs voiceover
- * synced from the start.
+ * synced from the start. The output is looped/trimmed so its length exactly
+ * matches the voiceover's real duration.
  */
-export async function buildFinalVideo(clips: StockClip[], audioUrl: string): Promise<string> {
+export async function buildFinalVideo(
+  clips: StockClip[],
+  audioUrl: string,
+  audioDuration: number
+): Promise<string> {
   const ffmpeg = await getFFmpeg();
 
   const audioData = await fetchFile(audioUrl);
@@ -66,7 +71,11 @@ export async function buildFinalVideo(clips: StockClip[], audioUrl: string): Pro
 
   await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c', 'copy', 'concat.mp4']);
 
+  // Loop the concatenated footage if needed and trim to the voiceover's exact
+  // duration so the final video length always matches the audio precisely.
   await ffmpeg.exec([
+    '-stream_loop',
+    '-1',
     '-i',
     'concat.mp4',
     '-i',
@@ -75,11 +84,14 @@ export async function buildFinalVideo(clips: StockClip[], audioUrl: string): Pro
     '0:v:0',
     '-map',
     '1:a:0',
+    '-t',
+    String(audioDuration),
     '-c:v',
-    'copy',
+    'libx264',
+    '-preset',
+    'ultrafast',
     '-c:a',
     'aac',
-    '-shortest',
     'output.mp4',
   ]);
 

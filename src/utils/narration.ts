@@ -1,7 +1,10 @@
-const WORDS_PER_MINUTE = 150;
-
-/** Estimates spoken duration of narration text at 150 words per minute. */
-export function estimateNarrationSeconds(narration: string): number {
-  const words = narration.trim().split(/\s+/).filter(Boolean).length;
-  return (words / WORDS_PER_MINUTE) * 60;
+/** Returns the exact duration (in seconds) of an audio file at the given URL. */
+export function getAudioDuration(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio();
+    audio.preload = 'metadata';
+    audio.onloadedmetadata = () => resolve(audio.duration);
+    audio.onerror = () => reject(new Error('Failed to read voiceover audio duration'));
+    audio.src = url;
+  });
 }

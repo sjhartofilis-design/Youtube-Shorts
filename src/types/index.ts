@@ -32,6 +32,7 @@ export interface QueueItem extends Script {
 
   voiceoverStatus: TaskStatus;
   audioUrl?: string;
+  audioDuration?: number; // exact voiceover duration in seconds
   voiceoverError?: string;
 
   processStatus: ProcessStatus;
