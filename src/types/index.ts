@@ -44,7 +44,15 @@ export interface ScheduleSlot {
   status: ScheduleStatus;
 }
 
-export type VoiceStyle = 'dramatic' | 'authoritative' | 'warm' | 'emotional';
+export type VoiceStyle =
+  | 'dramatic'
+  | 'authoritative'
+  | 'warm'
+  | 'emotional'
+  | 'calm'
+  | 'energetic'
+  | 'deep'
+  | 'soft';
 
 export interface SettingsState {
   anthropicApiKey: string;
@@ -55,14 +63,29 @@ export interface SettingsState {
   youtubeAccessToken: string;
   channel1Name: string;
   channel2Name: string;
-  voiceStyleSpace: 'dramatic' | 'authoritative';
-  voiceStyleAncientCiv: 'dramatic' | 'authoritative';
-  voiceStyleFeelGood: 'warm' | 'emotional';
+  voiceStyleSpace: VoiceStyle;
+  voiceStyleAncientCiv: VoiceStyle;
+  voiceStyleFeelGood: VoiceStyle;
 }
 
 export const VOICE_ID_MAP: Record<VoiceStyle, string> = {
   dramatic: 'ErXwobaYiN019PkySvjV',
-  authoritative: 'ErXwobaYiN019PkySvjV',
+  authoritative: 'TxGEqnHWrfWFTfGW9XjX',
   warm: 'EXAVITQu4vr4xnSDxMaL',
-  emotional: 'EXAVITQu4vr4xnSDxMaL',
+  emotional: 'MF3mGyEYCl7XYWbV9V6O',
+  calm: '21m00Tcm4TlvDq8ikWAM',
+  energetic: 'AZnzlk1XvdvUeBnXmlld',
+  deep: 'pNInz6obpgDQGcFmaJgB',
+  soft: 'yoZ06aMxZJJ28mfd3POQ',
 };
+
+export const VOICE_STYLE_OPTIONS: { value: VoiceStyle; label: string }[] = [
+  { value: 'dramatic', label: 'Dramatic' },
+  { value: 'authoritative', label: 'Authoritative' },
+  { value: 'warm', label: 'Warm' },
+  { value: 'emotional', label: 'Emotional' },
+  { value: 'calm', label: 'Calm' },
+  { value: 'energetic', label: 'Energetic' },
+  { value: 'deep', label: 'Deep' },
+  { value: 'soft', label: 'Soft-spoken' },
+];

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../hooks/useApp';
 import { startGoogleOAuth } from '../api/youtube';
+import { VOICE_STYLE_OPTIONS, type VoiceStyle } from '../types';
 
 function maskKey(key: string): string {
   if (!key) return '';
@@ -82,33 +83,24 @@ export default function Settings() {
             <SelectField
               label="Space Content Voice"
               value={form.voiceStyleSpace}
-              onChange={(v) => update('voiceStyleSpace', v as 'dramatic' | 'authoritative')}
-              options={[
-                { value: 'dramatic', label: 'Dramatic' },
-                { value: 'authoritative', label: 'Authoritative' },
-              ]}
+              onChange={(v) => update('voiceStyleSpace', v as VoiceStyle)}
+              options={VOICE_STYLE_OPTIONS}
             />
             <SelectField
               label="Ancient Civ Content Voice"
               value={form.voiceStyleAncientCiv}
-              onChange={(v) => update('voiceStyleAncientCiv', v as 'dramatic' | 'authoritative')}
-              options={[
-                { value: 'dramatic', label: 'Dramatic' },
-                { value: 'authoritative', label: 'Authoritative' },
-              ]}
+              onChange={(v) => update('voiceStyleAncientCiv', v as VoiceStyle)}
+              options={VOICE_STYLE_OPTIONS}
             />
             <SelectField
               label="Feel Good Content Voice"
               value={form.voiceStyleFeelGood}
-              onChange={(v) => update('voiceStyleFeelGood', v as 'warm' | 'emotional')}
-              options={[
-                { value: 'warm', label: 'Warm' },
-                { value: 'emotional', label: 'Emotional' },
-              ]}
+              onChange={(v) => update('voiceStyleFeelGood', v as VoiceStyle)}
+              options={VOICE_STYLE_OPTIONS}
             />
             <p className="text-xs text-gray-500">
-              Dramatic / Authoritative → ElevenLabs voice ErXwobaYiN019PkySvjV. Warm / Emotional →
-              ElevenLabs voice EXAVITQu4vr4xnSDxMaL.
+              Each tone maps to a distinct ElevenLabs voice — pick whichever fits the channel
+              best.
             </p>
           </div>
         </section>
