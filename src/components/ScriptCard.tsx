@@ -37,6 +37,7 @@ export default function ScriptCard({ script, category, onChange }: ScriptCardPro
       category,
       channel,
       videoStatus: 'idle',
+      clipRank: 0,
       voiceoverStatus: 'idle',
       processStatus: 'not_processed',
       postStatus: 'idle',
@@ -69,9 +70,18 @@ export default function ScriptCard({ script, category, onChange }: ScriptCardPro
 
       <div>
         <span className="mb-1 inline-block text-xs font-semibold uppercase tracking-wide text-violet-400">
-          Video Prompt
+          Stock Footage Searches
         </span>
-        <p className="text-sm leading-relaxed text-gray-400">{script.video_prompt}</p>
+        <div className="flex flex-wrap gap-2">
+          {script.stock_search_queries.map((query) => (
+            <span
+              key={query}
+              className="rounded-full bg-white/5 px-2.5 py-0.5 text-xs text-gray-300"
+            >
+              {query}
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">

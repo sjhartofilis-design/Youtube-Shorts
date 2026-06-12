@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { ProcessStatus, QueueItem } from '../types';
+import type { ProcessStatus, QueueItem, StockClip } from '../types';
 import { VOICE_ID_MAP } from '../types';
 import { useApp } from '../hooks/useApp';
-import { generateVeoVideo } from '../api/veo';
+import { findStockClip } from '../api/pexels';
 import { generateVoiceover } from '../api/elevenlabs';
 import { buildFinalVideo } from '../api/ffmpeg';
 import { uploadShort } from '../api/youtube';
+import { estimateNarrationSeconds } from '../utils/narration';
 import StatusBadge from './StatusBadge';
 
 const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
@@ -17,19 +18,35 @@ const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
 
 export default function QueueCard({ item }: { item: QueueItem }) {
   const { settings, updateQueueItem } = useApp();
-  const [pollCount, setPollCount] = useState(0);
   const [scheduledTime, setScheduledTime] = useState('');
 
-  const handleGenerateVideo = async () => {
+  const fetchClips = async (rank: number): Promise<StockClip[]> => {
+    const totalDuration = estimateNarrationSeconds(item.narration);
+    const queries = item.stock_search_queries;
+    const segmentDuration = totalDuration / queries.length;
+
+    const clips: StockClip[] = [];
+    for (const query of queries) {
+      const result = await findStockClip(settings.pexelsApiKey, query, rank);
+      clips.push({
+        query,
+        videoUrl: result.videoUrl,
+        thumbnailUrl: result.thumbnailUrl,
+        duration: Math.min(segmentDuration, result.sourceDuration),
+        sourceDuration: result.sourceDuration,
+      });
+    }
+    return clips;
+  };
+
+  const handleGenerateVideo = async (rank = 0) => {
     updateQueueItem(item.id, { videoStatus: 'generating', videoError: undefined });
-    setPollCount(0);
     try {
-      const videoUrl = await generateVeoVideo(settings.veoApiKey, item.video_prompt, () =>
-        setPollCount((c) => c + 1)
-      );
+      const clips = await fetchClips(rank);
       updateQueueItem(item.id, {
         videoStatus: 'ready',
-        videoUrl,
+        clips,
+        clipRank: rank,
         processStatus: 'not_processed',
         finalVideoUrl: undefined,
         processError: undefined,
@@ -37,10 +54,12 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     } catch (err) {
       updateQueueItem(item.id, {
         videoStatus: 'error',
-        videoError: err instanceof Error ? err.message : 'Video generation failed',
+        videoError: err instanceof Error ? err.message : 'Video clip search failed',
       });
     }
   };
+
+  const handleTryDifferentClips = () => handleGenerateVideo(item.clipRank + 1);
 
   const handleGenerateVoiceover = async () => {
     updateQueueItem(item.id, { voiceoverStatus: 'generating', voiceoverError: undefined });
@@ -65,10 +84,10 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   };
 
   const handleProcess = async () => {
-    if (!item.videoUrl || !item.audioUrl) return;
+    if (!item.clips?.length || !item.audioUrl) return;
     updateQueueItem(item.id, { processStatus: 'processing', processError: undefined });
     try {
-      const finalVideoUrl = await buildFinalVideo(item.videoUrl, item.audioUrl);
+      const finalVideoUrl = await buildFinalVideo(item.clips, item.audioUrl);
       updateQueueItem(item.id, { processStatus: 'ready', finalVideoUrl });
     } catch (err) {
       updateQueueItem(item.id, {
@@ -78,7 +97,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
-  // Automatically build the final 30s video once both the raw clip and the
+  // Automatically build the final video once both the clips and the
   // voiceover are ready.
   useEffect(() => {
     if (
@@ -167,29 +186,55 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         {/* Video */}
         <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white">Video</span>
+            <span className="text-sm font-medium text-white">Stock Clips</span>
             <StatusBadge status={item.videoStatus} />
           </div>
           {item.videoStatus === 'generating' && (
-            <p className="text-xs text-gray-500">Polling Veo… ({pollCount})</p>
+            <p className="text-xs text-gray-500">Searching Pexels and downloading clips…</p>
           )}
-          {item.videoStatus === 'ready' && item.videoUrl && (
-            <video src={item.videoUrl} controls className="w-full rounded-md" />
+          {item.videoStatus === 'ready' && item.clips && (
+            <div className="grid grid-cols-2 gap-2">
+              {item.clips.map((clip, idx) => (
+                <div key={`${clip.query}-${idx}`} className="flex flex-col gap-1">
+                  {clip.thumbnailUrl && (
+                    <img
+                      src={clip.thumbnailUrl}
+                      alt={clip.query}
+                      className="aspect-[9/16] w-full rounded-md object-cover"
+                    />
+                  )}
+                  <p className="truncate text-xs text-gray-400" title={clip.query}>
+                    {clip.query}
+                  </p>
+                  <p className="text-xs text-gray-500">{clip.duration.toFixed(1)}s</p>
+                </div>
+              ))}
+            </div>
           )}
           {item.videoStatus === 'error' && (
             <p className="text-xs text-red-400">{item.videoError}</p>
           )}
-          <button
-            onClick={handleGenerateVideo}
-            disabled={item.videoStatus === 'generating'}
-            className="mt-auto rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-          >
-            {item.videoStatus === 'error'
-              ? 'Retry'
-              : item.videoStatus === 'ready'
-                ? 'Regenerate Video'
-                : 'Generate Video'}
-          </button>
+          <div className="mt-auto flex flex-col gap-2">
+            <button
+              onClick={() => handleGenerateVideo(0)}
+              disabled={item.videoStatus === 'generating'}
+              className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              {item.videoStatus === 'error'
+                ? 'Retry'
+                : item.videoStatus === 'ready'
+                  ? 'Regenerate Clips'
+                  : 'Generate Video'}
+            </button>
+            {item.videoStatus === 'ready' && (
+              <button
+                onClick={handleTryDifferentClips}
+                className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
+              >
+                Try Different Clips
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Voiceover */}
@@ -257,7 +302,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
       {/* Final Processed Video */}
       <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-white">Final Video (30s with voiceover)</span>
+          <span className="text-sm font-medium text-white">Final Video (with voiceover)</span>
           <span
             className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
               item.processStatus === 'error'
@@ -274,7 +319,9 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         </div>
 
         {item.processStatus === 'processing' && (
-          <p className="text-xs text-gray-500">Looping clip and merging voiceover with ffmpeg…</p>
+          <p className="text-xs text-gray-500">
+            Trimming and concatenating clips and merging voiceover with ffmpeg…
+          </p>
         )}
 
         {item.processStatus === 'error' && (
@@ -304,7 +351,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
 
         {item.processStatus === 'not_processed' && (
           <p className="text-xs text-gray-500">
-            Generate video and voiceover to automatically build the final 30s video.
+            Generate video and voiceover to automatically build the final video.
           </p>
         )}
       </div>

@@ -3,7 +3,7 @@ export type ScriptCategory = 'space' | 'ancientciv';
 export interface Script {
   hook: string;
   narration: string;
-  video_prompt: string;
+  stock_search_queries: string[];
   title: string;
   hashtags: string[];
 }
@@ -12,15 +12,23 @@ export type TaskStatus = 'idle' | 'pending' | 'generating' | 'ready' | 'error';
 
 export type ProcessStatus = 'not_processed' | 'processing' | 'ready' | 'error';
 
+export interface StockClip {
+  query: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  duration: number; // trimmed segment length in seconds
+  sourceDuration: number; // original clip length in seconds
+}
+
 export interface QueueItem extends Script {
   id: string;
   category: ScriptCategory;
   channel: 1 | 2;
 
   videoStatus: TaskStatus;
-  videoUrl?: string;
   videoError?: string;
-  veoOperationName?: string;
+  clips?: StockClip[];
+  clipRank: number; // result offset used for "Try Different Clips"
 
   voiceoverStatus: TaskStatus;
   audioUrl?: string;
@@ -62,7 +70,7 @@ export type VoiceStyle =
 
 export interface SettingsState {
   anthropicApiKey: string;
-  veoApiKey: string;
+  pexelsApiKey: string;
   elevenLabsApiKey: string;
   youtubeClientId: string;
   youtubeClientSecret: string;

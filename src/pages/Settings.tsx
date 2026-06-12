@@ -60,10 +60,10 @@ export default function Settings() {
               secret
             />
             <Field
-              label="Veo API Key"
-              value={form.veoApiKey}
-              onChange={(v) => update('veoApiKey', v)}
-              placeholder="veo-..."
+              label="Pexels API Key"
+              value={form.pexelsApiKey}
+              onChange={(v) => update('pexelsApiKey', v)}
+              placeholder="get a free key at pexels.com/api"
               secret
             />
             <Field
@@ -177,7 +177,7 @@ export default function Settings() {
             <h2 className="mb-4 text-base font-semibold text-white">Saved Keys (Preview)</h2>
             <ul className="flex flex-col gap-2 text-sm text-gray-300">
               <li>Anthropic: {maskKey(form.anthropicApiKey) || '—'}</li>
-              <li>Veo: {maskKey(form.veoApiKey) || '—'}</li>
+              <li>Pexels: {maskKey(form.pexelsApiKey) || '—'}</li>
               <li>ElevenLabs: {maskKey(form.elevenLabsApiKey) || '—'}</li>
               <li>YouTube Access Token: {maskKey(form.youtubeAccessToken) || '—'}</li>
             </ul>
