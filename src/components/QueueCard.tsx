@@ -98,7 +98,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     if (!item.audioUrl) return;
     updateQueueItem(item.id, { captionsStatus: 'generating', captionsError: undefined });
     try {
-      const words = await transcribeAudio(item.audioUrl);
+      const words = await transcribeAudio(settings.elevenLabsApiKey, item.audioUrl);
       const captions = groupWordsIntoCaptions(words);
       updateQueueItem(item.id, {
         captionsStatus: 'ready',

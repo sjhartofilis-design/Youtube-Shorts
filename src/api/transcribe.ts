@@ -1,72 +1,54 @@
-import type { AutomaticSpeechRecognitionPipeline } from '@xenova/transformers';
-
-const WHISPER_SAMPLE_RATE = 16000;
-
 export interface WordTimestamp {
   word: string;
   start: number;
   end: number;
 }
 
-let transcriberPromise: Promise<AutomaticSpeechRecognitionPipeline> | null = null;
+interface ScribeWord {
+  text: string;
+  start: number;
+  end: number;
+  type?: string;
+}
 
-async function getTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
-  if (!transcriberPromise) {
-    const { pipeline } = await import('@xenova/transformers');
-    transcriberPromise = pipeline(
-      'automatic-speech-recognition',
-      'Xenova/whisper-tiny.en'
-    ) as Promise<AutomaticSpeechRecognitionPipeline>;
+interface ScribeResponse {
+  words?: ScribeWord[];
+}
+
+/** Transcribes the voiceover audio and returns word-level timestamps via the ElevenLabs Scribe API. */
+export async function transcribeAudio(apiKey: string, audioUrl: string): Promise<WordTimestamp[]> {
+  if (!apiKey) {
+    throw new Error('ElevenLabs API key is missing. Add it in Settings.');
   }
-  return transcriberPromise;
-}
 
-/** Decodes an audio file at the given URL to mono 16kHz PCM, as required by Whisper. */
-async function decodeAudioTo16kMono(audioUrl: string): Promise<Float32Array> {
-  const response = await fetch(audioUrl);
-  const arrayBuffer = await response.arrayBuffer();
+  const audioBlob = await (await fetch(audioUrl)).blob();
 
-  const audioCtx = new AudioContext();
-  const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+  const formData = new FormData();
+  formData.append('model_id', 'scribe_v1');
+  formData.append('timestamps_granularity', 'word');
+  formData.append('file', audioBlob, 'voiceover.mp3');
 
-  const offlineCtx = new OfflineAudioContext(
-    1,
-    Math.ceil(decoded.duration * WHISPER_SAMPLE_RATE),
-    WHISPER_SAMPLE_RATE
-  );
-  const source = offlineCtx.createBufferSource();
-  source.buffer = decoded;
-  source.connect(offlineCtx.destination);
-  source.start();
-
-  const rendered = await offlineCtx.startRendering();
-  await audioCtx.close();
-  return rendered.getChannelData(0);
-}
-
-/** Transcribes the voiceover audio and returns word-level timestamps via an in-browser Whisper model. */
-export async function transcribeAudio(audioUrl: string): Promise<WordTimestamp[]> {
-  const transcriber = await getTranscriber();
-  const audioData = await decodeAudioTo16kMono(audioUrl);
-
-  const result = await transcriber(audioData, {
-    return_timestamps: 'word',
-    chunk_length_s: 30,
+  const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    method: 'POST',
+    headers: { 'xi-api-key': apiKey },
+    body: formData,
   });
 
-  const output = Array.isArray(result) ? result[0] : result;
-  const chunks = (output as { chunks?: { text: string; timestamp: [number, number | null] }[] })
-    .chunks;
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`ElevenLabs Scribe API error (${response.status}): ${errBody}`);
+  }
 
-  if (!chunks || chunks.length === 0) {
+  const data: ScribeResponse = await response.json();
+  const words = (data.words ?? []).filter((w) => !w.type || w.type === 'word');
+
+  if (words.length === 0) {
     throw new Error('Transcription did not return any word timestamps');
   }
 
-  return chunks
-    .map((chunk) => ({
-      word: chunk.text.trim(),
-      start: chunk.timestamp[0] ?? 0,
-      end: chunk.timestamp[1] ?? chunk.timestamp[0] ?? 0,
-    }))
-    .filter((w) => w.word.length > 0);
+  return words.map((w) => ({
+    word: w.text.trim(),
+    start: w.start,
+    end: w.end,
+  }));
 }
