@@ -20,6 +20,13 @@ export interface StockClip {
   sourceDuration: number; // original clip length in seconds
 }
 
+/** A 2-4 word caption chunk with its on-screen timing window. */
+export interface CaptionChunk {
+  text: string;
+  start: number; // seconds
+  end: number; // seconds
+}
+
 export interface QueueItem extends Script {
   id: string;
   category: ScriptCategory;
@@ -34,6 +41,11 @@ export interface QueueItem extends Script {
   audioUrl?: string;
   audioDuration?: number; // exact voiceover duration in seconds
   voiceoverError?: string;
+
+  captionsStatus: TaskStatus;
+  captions?: CaptionChunk[];
+  captionsSrt?: string;
+  captionsError?: string;
 
   processStatus: ProcessStatus;
   finalVideoUrl?: string;

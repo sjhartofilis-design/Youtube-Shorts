@@ -5,8 +5,10 @@ import { useApp } from '../hooks/useApp';
 import { findStockClip } from '../api/pexels';
 import { generateVoiceover } from '../api/elevenlabs';
 import { buildFinalVideo } from '../api/ffmpeg';
+import { transcribeAudio } from '../api/transcribe';
 import { uploadShort } from '../api/youtube';
 import { getAudioDuration } from '../utils/narration';
+import { captionsToSrt, groupWordsIntoCaptions } from '../utils/captions';
 import StatusBadge from './StatusBadge';
 
 const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
@@ -76,6 +78,10 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         audioDuration,
         videoStatus: 'idle',
         clips: undefined,
+        captionsStatus: 'idle',
+        captions: undefined,
+        captionsSrt: undefined,
+        captionsError: undefined,
         processStatus: 'not_processed',
         finalVideoUrl: undefined,
         processError: undefined,
@@ -88,11 +94,58 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
+  const handleGenerateCaptions = async () => {
+    if (!item.audioUrl) return;
+    updateQueueItem(item.id, { captionsStatus: 'generating', captionsError: undefined });
+    try {
+      const words = await transcribeAudio(item.audioUrl);
+      const captions = groupWordsIntoCaptions(words);
+      updateQueueItem(item.id, {
+        captionsStatus: 'ready',
+        captions,
+        captionsSrt: captionsToSrt(captions),
+        processStatus: 'not_processed',
+        finalVideoUrl: undefined,
+        processError: undefined,
+      });
+    } catch (err) {
+      updateQueueItem(item.id, {
+        captionsStatus: 'error',
+        captionsError: err instanceof Error ? err.message : 'Caption transcription failed',
+      });
+    }
+  };
+
+  const handleSkipCaptions = () => {
+    updateQueueItem(item.id, {
+      captionsStatus: 'ready',
+      captions: [],
+      captionsSrt: undefined,
+      captionsError: undefined,
+      processStatus: 'not_processed',
+      finalVideoUrl: undefined,
+      processError: undefined,
+    });
+  };
+
+  // Automatically transcribe the voiceover for captions once it's ready.
+  useEffect(() => {
+    if (item.voiceoverStatus === 'ready' && item.captionsStatus === 'idle') {
+      handleGenerateCaptions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.voiceoverStatus, item.captionsStatus]);
+
   const handleProcess = async () => {
     if (!item.clips?.length || !item.audioUrl || !item.audioDuration) return;
     updateQueueItem(item.id, { processStatus: 'processing', processError: undefined });
     try {
-      const finalVideoUrl = await buildFinalVideo(item.clips, item.audioUrl, item.audioDuration);
+      const finalVideoUrl = await buildFinalVideo(
+        item.clips,
+        item.audioUrl,
+        item.audioDuration,
+        item.captions ?? []
+      );
       updateQueueItem(item.id, { processStatus: 'ready', finalVideoUrl });
     } catch (err) {
       updateQueueItem(item.id, {
@@ -102,18 +155,20 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
-  // Automatically build the final video once both the clips and the
-  // voiceover are ready.
+  // Automatically build the final video once the clips, voiceover, and
+  // captions step (ready, errored, or skipped) have all settled.
   useEffect(() => {
     if (
       item.videoStatus === 'ready' &&
       item.voiceoverStatus === 'ready' &&
+      item.captionsStatus !== 'idle' &&
+      item.captionsStatus !== 'generating' &&
       item.processStatus === 'not_processed'
     ) {
       handleProcess();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.videoStatus, item.voiceoverStatus, item.processStatus]);
+  }, [item.videoStatus, item.voiceoverStatus, item.captionsStatus, item.processStatus]);
 
   const handlePost = async (publishNow: boolean) => {
     if (!item.finalVideoUrl) return;
@@ -187,7 +242,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {/* Voiceover */}
         <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="flex items-center justify-between">
@@ -223,6 +278,61 @@ export default function QueueCard({ item }: { item: QueueItem }) {
                 ? 'Regenerate Voiceover'
                 : 'Generate Voiceover'}
           </button>
+        </div>
+
+        {/* Captions */}
+        <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-white">Captions</span>
+            <StatusBadge status={item.captionsStatus} />
+          </div>
+          {item.voiceoverStatus !== 'ready' && (
+            <p className="text-xs text-gray-500">
+              Generate the voiceover first to transcribe captions.
+            </p>
+          )}
+          {item.captionsStatus === 'generating' && (
+            <p className="text-xs text-gray-500">Transcribing voiceover with Whisper…</p>
+          )}
+          {item.captionsStatus === 'ready' && (
+            <>
+              {item.captions && item.captions.length > 0 ? (
+                <>
+                  <p className="text-xs text-gray-500">{item.captions.length} caption chunks</p>
+                  {item.captionsSrt && (
+                    <a
+                      href={`data:text/srt;charset=utf-8,${encodeURIComponent(item.captionsSrt)}`}
+                      download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}.srt`}
+                      className="text-xs text-violet-400 hover:underline"
+                    >
+                      Download SRT
+                    </a>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-gray-500">Skipped — no captions will be burned in.</p>
+              )}
+            </>
+          )}
+          {item.captionsStatus === 'error' && (
+            <p className="text-xs text-red-400">{item.captionsError}</p>
+          )}
+          {item.captionsStatus === 'error' && (
+            <div className="mt-auto flex flex-col gap-2">
+              <button
+                onClick={handleGenerateCaptions}
+                className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500"
+              >
+                Retry
+              </button>
+              <button
+                onClick={handleSkipCaptions}
+                className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
+              >
+                Continue Without Captions
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Video Clips */}
