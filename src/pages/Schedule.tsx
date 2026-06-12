@@ -2,9 +2,14 @@ import { useState } from 'react';
 import { useApp } from '../hooks/useApp';
 import type { ScheduleSlot, ScheduleStatus } from '../types';
 
-const START_HOUR = 8;
-const END_HOUR = 22;
-const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
+// Fixed daily posting times in Eastern Time (the audience's local time).
+const TIME_SLOTS: { hour: number; minute: number; label: string }[] = [
+  { hour: 7, minute: 30, label: '7:30 AM ET' },
+  { hour: 12, minute: 0, label: '12:00 PM ET' },
+  { hour: 13, minute: 30, label: '1:30 PM ET' },
+  { hour: 19, minute: 0, label: '7:00 PM ET' },
+  { hour: 21, minute: 0, label: '9:00 PM ET' },
+];
 
 const STATUS_COLORS: Record<ScheduleStatus, string> = {
   scheduled: 'bg-violet-500',
@@ -12,15 +17,43 @@ const STATUS_COLORS: Record<ScheduleStatus, string> = {
   failed: 'bg-red-500',
 };
 
-function formatHour(hour: number): string {
-  const period = hour >= 12 ? 'PM' : 'AM';
-  const displayHour = hour % 12 === 0 ? 12 : hour % 12;
-  return `${displayHour}:00 ${period}`;
+/** Returns the UTC offset (in minutes) of America/New_York at the given instant, handling DST. */
+function getEasternUtcOffsetMinutes(date: Date): number {
+  const tzPart = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    timeZoneName: 'shortOffset',
+  })
+    .formatToParts(date)
+    .find((p) => p.type === 'timeZoneName')?.value;
+
+  const match = tzPart?.match(/GMT([+-]\d+)(?::(\d+))?/);
+  const hours = match ? parseInt(match[1], 10) : -5;
+  const minutes = match?.[2] ? parseInt(match[2], 10) : 0;
+  return hours * 60 + (hours < 0 ? -minutes : minutes);
 }
 
-function todayAt(hour: number): Date {
-  const d = new Date();
-  d.setHours(Math.floor(hour), (hour % 1) * 60, 0, 0);
+/** Returns the {hour, minute} of the given instant as displayed in Eastern Time. */
+function getEasternHourMinute(date: Date): { hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(date);
+
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return { hour, minute };
+}
+
+/** Returns today's date at the given Eastern Time hour/minute, as an absolute instant. */
+function todayAtEastern(hour: number, minute: number): Date {
+  const now = new Date();
+  const offsetMinutes = getEasternUtcOffsetMinutes(now);
+  const utcMinutesOfDay = hour * 60 + minute - offsetMinutes;
+
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+  d.setUTCMinutes(utcMinutesOfDay);
   return d;
 }
 
@@ -42,13 +75,11 @@ export default function Schedule() {
   const handleAutoSchedule = () => {
     const newSlots: ScheduleSlot[] = [];
     ([1, 2] as const).forEach((channel) => {
-      const items = queue.filter((q) => q.channel === channel).slice(0, 2);
-      const span = END_HOUR - START_HOUR;
-      const step = items.length > 1 ? span / (items.length - 1) : 0;
+      const items = queue.filter((q) => q.channel === channel).slice(0, TIME_SLOTS.length);
 
       items.forEach((item, idx) => {
-        const hour = items.length === 1 ? START_HOUR : START_HOUR + step * idx;
-        const time = todayAt(hour);
+        const slot = TIME_SLOTS[idx];
+        const time = todayAtEastern(slot.hour, slot.minute);
         newSlots.push({
           id: `${item.id}-slot`,
           queueItemId: item.id,
@@ -64,9 +95,10 @@ export default function Schedule() {
     setSchedule(newSlots);
   };
 
-  const handleDrop = (channel: 1 | 2, hour: number) => {
+  const handleDrop = (channel: 1 | 2, slotIndex: number) => {
     if (!draggingId) return;
-    const time = todayAt(hour);
+    const slot = TIME_SLOTS[slotIndex];
+    const time = todayAtEastern(slot.hour, slot.minute);
     setSchedule((prev) =>
       prev.map((slot) =>
         slot.queueItemId === draggingId
@@ -78,11 +110,14 @@ export default function Schedule() {
     setDraggingId(null);
   };
 
-  const slotsForCell = (channel: 1 | 2, hour: number) =>
-    schedule.filter((s) => {
-      const d = new Date(s.time);
-      return s.channel === channel && d.getHours() === hour;
+  const slotsForCell = (channel: 1 | 2, slotIndex: number) => {
+    const slot = TIME_SLOTS[slotIndex];
+    return schedule.filter((s) => {
+      if (s.channel !== channel) return false;
+      const { hour, minute } = getEasternHourMinute(new Date(s.time));
+      return hour === slot.hour && minute === slot.minute;
     });
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
@@ -90,8 +125,9 @@ export default function Schedule() {
         <div>
           <h1 className="mb-2 text-2xl font-bold text-white">Schedule</h1>
           <p className="text-sm text-gray-400">
-            Drag and drop videos to reschedule. Default schedule spaces 2 videos per channel
-            evenly between 8am and 10pm (4 videos total per day).
+            Drag and drop videos to reschedule. Default schedule posts 5 videos per channel each
+            day at 7:30 AM, 12:00 PM, 1:30 PM, 7:00 PM, and 9:00 PM Eastern Time (10 videos total
+            per day).
           </p>
         </div>
         <button
@@ -115,8 +151,8 @@ export default function Schedule() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-white/10">
-        <div className="grid grid-cols-[80px_1fr_1fr] border-b border-white/10 bg-white/[0.03]">
-          <div className="px-3 py-3 text-xs font-semibold uppercase text-gray-500">Time</div>
+        <div className="grid grid-cols-[110px_1fr_1fr] border-b border-white/10 bg-white/[0.03]">
+          <div className="px-3 py-3 text-xs font-semibold uppercase text-gray-500">Time (ET)</div>
           <div className="border-l border-white/10 px-3 py-3 text-sm font-semibold text-white">
             {settings.channel1Name}
           </div>
@@ -125,29 +161,27 @@ export default function Schedule() {
           </div>
         </div>
 
-        {HOURS.map((hour) => (
-          <div key={hour} className="grid grid-cols-[80px_1fr_1fr] border-b border-white/5">
-            <div className="flex items-center px-3 py-4 text-xs text-gray-500">
-              {formatHour(hour)}
-            </div>
+        {TIME_SLOTS.map((slot, slotIndex) => (
+          <div key={slot.label} className="grid grid-cols-[110px_1fr_1fr] border-b border-white/5">
+            <div className="flex items-center px-3 py-4 text-xs text-gray-500">{slot.label}</div>
             {([1, 2] as const).map((channel) => (
               <div
                 key={channel}
                 onDragOver={(e) => e.preventDefault()}
-                onDrop={() => handleDrop(channel, hour)}
+                onDrop={() => handleDrop(channel, slotIndex)}
                 className="min-h-[60px] border-l border-white/5 p-2"
               >
-                {slotsForCell(channel, hour).map((slot) => (
+                {slotsForCell(channel, slotIndex).map((s) => (
                   <div
-                    key={slot.id}
+                    key={s.id}
                     draggable
-                    onDragStart={() => setDraggingId(slot.queueItemId)}
+                    onDragStart={() => setDraggingId(s.queueItemId)}
                     className="mb-1 flex cursor-move items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-gray-200"
                   >
                     <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${STATUS_COLORS[deriveStatus(slot.queueItemId)]}`}
+                      className={`h-2 w-2 shrink-0 rounded-full ${STATUS_COLORS[deriveStatus(s.queueItemId)]}`}
                     />
-                    <span className="truncate">{slot.title}</span>
+                    <span className="truncate">{s.title}</span>
                   </div>
                 ))}
               </div>
@@ -158,7 +192,7 @@ export default function Schedule() {
 
       {schedule.length === 0 && (
         <p className="mt-4 text-center text-sm text-gray-500">
-          No videos scheduled yet. Click "Auto-Schedule" to space queued videos evenly.
+          No videos scheduled yet. Click "Auto-Schedule" to fill the 5 daily slots per channel.
         </p>
       )}
     </div>
