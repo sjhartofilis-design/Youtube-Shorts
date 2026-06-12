@@ -8,7 +8,7 @@ const SCHEDULE_KEY = 'shorts-automator:schedule';
 
 const defaultSettings: SettingsState = {
   anthropicApiKey: '',
-  klingApiKey: '',
+  veoApiKey: '',
   elevenLabsApiKey: '',
   youtubeClientId: '',
   youtubeClientSecret: '',

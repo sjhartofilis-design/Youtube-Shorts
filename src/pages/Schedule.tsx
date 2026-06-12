@@ -42,7 +42,7 @@ export default function Schedule() {
   const handleAutoSchedule = () => {
     const newSlots: ScheduleSlot[] = [];
     ([1, 2] as const).forEach((channel) => {
-      const items = queue.filter((q) => q.channel === channel).slice(0, 5);
+      const items = queue.filter((q) => q.channel === channel).slice(0, 2);
       const span = END_HOUR - START_HOUR;
       const step = items.length > 1 ? span / (items.length - 1) : 0;
 
@@ -90,8 +90,8 @@ export default function Schedule() {
         <div>
           <h1 className="mb-2 text-2xl font-bold text-white">Schedule</h1>
           <p className="text-sm text-gray-400">
-            Drag and drop videos to reschedule. Default schedule spaces 5 videos per channel
-            between 8am and 10pm.
+            Drag and drop videos to reschedule. Default schedule spaces 2 videos per channel
+            evenly between 8am and 10pm (4 videos total per day).
           </p>
         </div>
         <button

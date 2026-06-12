@@ -3,12 +3,14 @@ export type ScriptCategory = 'space' | 'ancientciv';
 export interface Script {
   hook: string;
   narration: string;
-  kling_prompt: string;
+  video_prompt: string;
   title: string;
   hashtags: string[];
 }
 
 export type TaskStatus = 'idle' | 'pending' | 'generating' | 'ready' | 'error';
+
+export type ProcessStatus = 'not_processed' | 'processing' | 'ready' | 'error';
 
 export interface QueueItem extends Script {
   id: string;
@@ -18,11 +20,15 @@ export interface QueueItem extends Script {
   videoStatus: TaskStatus;
   videoUrl?: string;
   videoError?: string;
-  klingTaskId?: string;
+  veoOperationName?: string;
 
   voiceoverStatus: TaskStatus;
   audioUrl?: string;
   voiceoverError?: string;
+
+  processStatus: ProcessStatus;
+  finalVideoUrl?: string;
+  processError?: string;
 
   postStatus: TaskStatus;
   postError?: string;
@@ -56,7 +62,7 @@ export type VoiceStyle =
 
 export interface SettingsState {
   anthropicApiKey: string;
-  klingApiKey: string;
+  veoApiKey: string;
   elevenLabsApiKey: string;
   youtubeClientId: string;
   youtubeClientSecret: string;

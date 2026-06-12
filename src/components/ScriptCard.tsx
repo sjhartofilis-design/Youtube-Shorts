@@ -38,6 +38,7 @@ export default function ScriptCard({ script, category, onChange }: ScriptCardPro
       channel,
       videoStatus: 'idle',
       voiceoverStatus: 'idle',
+      processStatus: 'not_processed',
       postStatus: 'idle',
     });
     setAdded(true);
@@ -68,9 +69,9 @@ export default function ScriptCard({ script, category, onChange }: ScriptCardPro
 
       <div>
         <span className="mb-1 inline-block text-xs font-semibold uppercase tracking-wide text-violet-400">
-          Kling Prompt
+          Video Prompt
         </span>
-        <p className="text-sm leading-relaxed text-gray-400">{script.kling_prompt}</p>
+        <p className="text-sm leading-relaxed text-gray-400">{script.video_prompt}</p>
       </div>
 
       <div className="flex flex-wrap gap-2">

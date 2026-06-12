@@ -1,11 +1,19 @@
-import { useState } from 'react';
-import type { QueueItem } from '../types';
+import { useEffect, useState } from 'react';
+import type { ProcessStatus, QueueItem } from '../types';
 import { VOICE_ID_MAP } from '../types';
 import { useApp } from '../hooks/useApp';
-import { generateKlingVideo } from '../api/kling';
+import { generateVeoVideo } from '../api/veo';
 import { generateVoiceover } from '../api/elevenlabs';
+import { buildFinalVideo } from '../api/ffmpeg';
 import { uploadShort } from '../api/youtube';
 import StatusBadge from './StatusBadge';
+
+const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
+  not_processed: 'Not Processed',
+  processing: 'Processing',
+  ready: 'Ready',
+  error: 'Error',
+};
 
 export default function QueueCard({ item }: { item: QueueItem }) {
   const { settings, updateQueueItem } = useApp();
@@ -16,10 +24,16 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     updateQueueItem(item.id, { videoStatus: 'generating', videoError: undefined });
     setPollCount(0);
     try {
-      const videoUrl = await generateKlingVideo(settings.klingApiKey, item.kling_prompt, () =>
+      const videoUrl = await generateVeoVideo(settings.veoApiKey, item.video_prompt, () =>
         setPollCount((c) => c + 1)
       );
-      updateQueueItem(item.id, { videoStatus: 'ready', videoUrl });
+      updateQueueItem(item.id, {
+        videoStatus: 'ready',
+        videoUrl,
+        processStatus: 'not_processed',
+        finalVideoUrl: undefined,
+        processError: undefined,
+      });
     } catch (err) {
       updateQueueItem(item.id, {
         videoStatus: 'error',
@@ -35,7 +49,13 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         item.category === 'space' ? settings.voiceStyleSpace : settings.voiceStyleAncientCiv;
       const voiceId = VOICE_ID_MAP[voiceStyle];
       const audioUrl = await generateVoiceover(settings.elevenLabsApiKey, voiceId, item.narration);
-      updateQueueItem(item.id, { voiceoverStatus: 'ready', audioUrl });
+      updateQueueItem(item.id, {
+        voiceoverStatus: 'ready',
+        audioUrl,
+        processStatus: 'not_processed',
+        finalVideoUrl: undefined,
+        processError: undefined,
+      });
     } catch (err) {
       updateQueueItem(item.id, {
         voiceoverStatus: 'error',
@@ -44,13 +64,40 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
+  const handleProcess = async () => {
+    if (!item.videoUrl || !item.audioUrl) return;
+    updateQueueItem(item.id, { processStatus: 'processing', processError: undefined });
+    try {
+      const finalVideoUrl = await buildFinalVideo(item.videoUrl, item.audioUrl);
+      updateQueueItem(item.id, { processStatus: 'ready', finalVideoUrl });
+    } catch (err) {
+      updateQueueItem(item.id, {
+        processStatus: 'error',
+        processError: err instanceof Error ? err.message : 'Video processing failed',
+      });
+    }
+  };
+
+  // Automatically build the final 30s video once both the raw clip and the
+  // voiceover are ready.
+  useEffect(() => {
+    if (
+      item.videoStatus === 'ready' &&
+      item.voiceoverStatus === 'ready' &&
+      item.processStatus === 'not_processed'
+    ) {
+      handleProcess();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.videoStatus, item.voiceoverStatus, item.processStatus]);
+
   const handlePost = async (publishNow: boolean) => {
-    if (!item.videoUrl) return;
+    if (!item.finalVideoUrl) return;
     updateQueueItem(item.id, { postStatus: 'generating', postError: undefined });
     try {
       const youtubeVideoId = await uploadShort({
         accessToken: settings.youtubeAccessToken,
-        videoUrl: item.videoUrl,
+        videoUrl: item.finalVideoUrl,
         title: item.title,
         hashtags: item.hashtags,
         description: item.hook,
@@ -70,7 +117,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
-  const bothReady = item.videoStatus === 'ready' && item.voiceoverStatus === 'ready';
+  const readyToPost = item.processStatus === 'ready' && !!item.finalVideoUrl;
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-5">
@@ -84,7 +131,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         </div>
       </div>
 
-      {bothReady && (
+      {readyToPost && (
         <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-green-400">
             ✓ Ready to Post
@@ -124,7 +171,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
             <StatusBadge status={item.videoStatus} />
           </div>
           {item.videoStatus === 'generating' && (
-            <p className="text-xs text-gray-500">Polling Kling… ({pollCount})</p>
+            <p className="text-xs text-gray-500">Polling Veo… ({pollCount})</p>
           )}
           {item.videoStatus === 'ready' && item.videoUrl && (
             <video src={item.videoUrl} controls className="w-full rounded-md" />
@@ -191,9 +238,9 @@ export default function QueueCard({ item }: { item: QueueItem }) {
             </p>
           )}
           {item.postStatus === 'error' && <p className="text-xs text-red-400">{item.postError}</p>}
-          {!bothReady && (
+          {!readyToPost && (
             <p className="text-xs text-gray-500">
-              Generate video and voiceover to enable posting.
+              Generate video and voiceover, then wait for processing to finish to enable posting.
             </p>
           )}
           {item.postStatus === 'error' && (
@@ -205,6 +252,61 @@ export default function QueueCard({ item }: { item: QueueItem }) {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Final Processed Video */}
+      <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-white">Final Video (30s with voiceover)</span>
+          <span
+            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+              item.processStatus === 'error'
+                ? 'bg-red-500/10 text-red-400 border-red-500/30'
+                : item.processStatus === 'processing'
+                  ? 'bg-violet-600/10 text-violet-400 border-violet-600/30 animate-pulse'
+                  : item.processStatus === 'ready'
+                    ? 'bg-green-500/10 text-green-400 border-green-500/30'
+                    : 'bg-white/5 text-gray-400 border-white/10'
+            }`}
+          >
+            {PROCESS_STATUS_LABELS[item.processStatus]}
+          </span>
+        </div>
+
+        {item.processStatus === 'processing' && (
+          <p className="text-xs text-gray-500">Looping clip and merging voiceover with ffmpeg…</p>
+        )}
+
+        {item.processStatus === 'error' && (
+          <>
+            <p className="text-xs text-red-400">{item.processError}</p>
+            <button
+              onClick={handleProcess}
+              className="self-start rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500"
+            >
+              Retry
+            </button>
+          </>
+        )}
+
+        {item.processStatus === 'ready' && item.finalVideoUrl && (
+          <div className="flex flex-col gap-2">
+            <video src={item.finalVideoUrl} controls className="w-full rounded-md" />
+            <a
+              href={item.finalVideoUrl}
+              download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}_final.mp4`}
+              className="self-start rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
+            >
+              Download Final Video
+            </a>
+          </div>
+        )}
+
+        {item.processStatus === 'not_processed' && (
+          <p className="text-xs text-gray-500">
+            Generate video and voiceover to automatically build the final 30s video.
+          </p>
+        )}
       </div>
     </div>
   );
