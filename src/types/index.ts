@@ -13,6 +13,7 @@ export type TaskStatus = 'idle' | 'pending' | 'generating' | 'ready' | 'error';
 export type ProcessStatus = 'not_processed' | 'processing' | 'ready' | 'error';
 
 export interface StockClip {
+  id: number; // Pexels video ID, used to avoid reusing the same clip
   query: string;
   videoUrl: string;
   thumbnailUrl: string;

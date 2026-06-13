@@ -33,13 +33,19 @@ function extractJsonArray(text: string): Script[] {
 export async function generateScripts(
   apiKey: string,
   category: ScriptCategory,
-  single = false
+  single = false,
+  focus = ''
 ): Promise<Script[]> {
   if (!apiKey) {
     throw new Error('Anthropic API key is missing. Add it in Settings.');
   }
 
-  const systemPrompt = SYSTEM_PROMPTS[category] + (single ? SINGLE_SCRIPT_SUFFIX : '');
+  const focusSuffix = focus.trim()
+    ? ` Additionally, prioritize the following focus for these scripts: ${focus.trim()}.`
+    : '';
+
+  const systemPrompt =
+    SYSTEM_PROMPTS[category] + (single ? SINGLE_SCRIPT_SUFFIX : '') + focusSuffix;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',

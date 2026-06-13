@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import type { ProcessStatus, QueueItem, StockClip } from '../types';
 import { VOICE_ID_MAP } from '../types';
 import { useApp } from '../hooks/useApp';
-import { findStockClip } from '../api/pexels';
+import { selectClipsForVoiceover } from '../api/pexels';
 import { generateVoiceover } from '../api/elevenlabs';
-import { buildFinalVideo } from '../api/ffmpeg';
+import { buildFinalVideo, speedUpAudio } from '../api/ffmpeg';
 import { transcribeAudio } from '../api/transcribe';
 import { uploadShort } from '../api/youtube';
 import { getAudioDuration } from '../utils/narration';
@@ -19,37 +19,33 @@ const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
 };
 
 export default function QueueCard({ item }: { item: QueueItem }) {
-  const { settings, updateQueueItem } = useApp();
+  const { settings, updateQueueItem, usedClipIds, addUsedClipIds } = useApp();
   const [scheduledTime, setScheduledTime] = useState('');
 
-  const fetchClips = async (rank: number): Promise<StockClip[]> => {
+  const fetchClips = async (extraExcludeIds: number[] = []): Promise<StockClip[]> => {
     const totalDuration = item.audioDuration ?? 0;
     const queries = item.stock_search_queries;
-    const segmentDuration = totalDuration / queries.length;
 
-    const clips: StockClip[] = [];
-    for (const query of queries) {
-      const result = await findStockClip(settings.pexelsApiKey, query, rank);
-      clips.push({
-        query,
-        videoUrl: result.videoUrl,
-        thumbnailUrl: result.thumbnailUrl,
-        duration: Math.min(segmentDuration, result.sourceDuration),
-        sourceDuration: result.sourceDuration,
-      });
-    }
+    const { clips, newUsedIds } = await selectClipsForVoiceover(
+      settings.pexelsApiKey,
+      queries,
+      totalDuration,
+      [...usedClipIds, ...extraExcludeIds]
+    );
+    addUsedClipIds(newUsedIds);
     return clips;
   };
 
-  const handleGenerateVideo = async (rank = 0) => {
+  const handleGenerateVideo = async (retry = false) => {
     if (!item.audioDuration) return;
     updateQueueItem(item.id, { videoStatus: 'generating', videoError: undefined });
     try {
-      const clips = await fetchClips(rank);
+      const extraExcludeIds = retry && item.clips ? item.clips.map((c) => c.id) : [];
+      const clips = await fetchClips(extraExcludeIds);
       updateQueueItem(item.id, {
         videoStatus: 'ready',
         clips,
-        clipRank: rank,
+        clipRank: retry ? item.clipRank + 1 : 0,
         processStatus: 'not_processed',
         finalVideoUrl: undefined,
         processError: undefined,
@@ -62,7 +58,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
-  const handleTryDifferentClips = () => handleGenerateVideo(item.clipRank + 1);
+  const handleTryDifferentClips = () => handleGenerateVideo(true);
 
   const handleGenerateVoiceover = async () => {
     updateQueueItem(item.id, { voiceoverStatus: 'generating', voiceoverError: undefined });
@@ -70,7 +66,12 @@ export default function QueueCard({ item }: { item: QueueItem }) {
       const voiceStyle =
         item.category === 'space' ? settings.voiceStyleSpace : settings.voiceStyleAncientCiv;
       const voiceId = VOICE_ID_MAP[voiceStyle];
-      const audioUrl = await generateVoiceover(settings.elevenLabsApiKey, voiceId, item.narration);
+      const rawAudioUrl = await generateVoiceover(
+        settings.elevenLabsApiKey,
+        voiceId,
+        item.narration
+      );
+      const audioUrl = await speedUpAudio(rawAudioUrl, 1.5);
       const audioDuration = await getAudioDuration(audioUrl);
       updateQueueItem(item.id, {
         voiceoverStatus: 'ready',
@@ -373,7 +374,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
           )}
           <div className="mt-auto flex flex-col gap-2">
             <button
-              onClick={() => handleGenerateVideo(0)}
+              onClick={() => handleGenerateVideo(false)}
               disabled={item.voiceoverStatus !== 'ready' || item.videoStatus === 'generating'}
               className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
             >

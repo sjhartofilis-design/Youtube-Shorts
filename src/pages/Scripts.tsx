@@ -10,12 +10,13 @@ export default function Scripts() {
   const [ancientScripts, setAncientScripts] = useState<Script[]>([]);
   const [loading, setLoading] = useState<ScriptCategory | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [focus, setFocus] = useState('');
 
   const handleGenerate = async (category: ScriptCategory) => {
     setLoading(category);
     setError(null);
     try {
-      const scripts = await generateScripts(settings.anthropicApiKey, category);
+      const scripts = await generateScripts(settings.anthropicApiKey, category, false, focus);
       if (category === 'space') {
         setSpaceScripts(scripts);
       } else {
@@ -34,6 +35,20 @@ export default function Scripts() {
       <p className="mb-6 text-sm text-gray-400">
         Generate viral YouTube Shorts scripts with Claude.
       </p>
+
+      <div className="mb-4">
+        <label htmlFor="focus" className="mb-1.5 block text-sm font-medium text-gray-300">
+          Optional: focus on specific topics or angles
+        </label>
+        <textarea
+          id="focus"
+          value={focus}
+          onChange={(e) => setFocus(e.target.value)}
+          placeholder="e.g. focus on Egyptian pyramids, or include a fact about Saturn's rings"
+          rows={2}
+          className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-gray-200 placeholder:text-gray-500 focus:border-violet-500 focus:outline-none"
+        />
+      </div>
 
       <div className="mb-8 flex flex-wrap gap-3">
         <button

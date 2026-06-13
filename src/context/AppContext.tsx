@@ -5,6 +5,7 @@ import { AppContext } from './appContextDefinition';
 const SETTINGS_KEY = 'shorts-automator:settings';
 const QUEUE_KEY = 'shorts-automator:queue';
 const SCHEDULE_KEY = 'shorts-automator:schedule';
+const USED_CLIP_IDS_KEY = 'shorts-automator:usedClipIds';
 
 const defaultSettings: SettingsState = {
   anthropicApiKey: '',
@@ -37,6 +38,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [schedule, setSchedule] = useState<ScheduleSlot[]>(() =>
     loadFromStorage(SCHEDULE_KEY, [])
   );
+  const [usedClipIds, setUsedClipIds] = useState<number[]>(() =>
+    loadFromStorage(USED_CLIP_IDS_KEY, [])
+  );
 
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -50,6 +54,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule));
   }, [schedule]);
 
+  useEffect(() => {
+    localStorage.setItem(USED_CLIP_IDS_KEY, JSON.stringify(usedClipIds));
+  }, [usedClipIds]);
+
   const addToQueue = (item: QueueItem) => {
     setQueue((prev) => [...prev, item]);
   };
@@ -58,6 +66,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setQueue((prev) =>
       prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
     );
+  };
+
+  const addUsedClipIds = (ids: number[]) => {
+    if (ids.length === 0) return;
+    setUsedClipIds((prev) => [...new Set([...prev, ...ids])]);
   };
 
   return (
@@ -71,6 +84,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updateQueueItem,
         schedule,
         setSchedule,
+        usedClipIds,
+        addUsedClipIds,
       }}
     >
       {children}

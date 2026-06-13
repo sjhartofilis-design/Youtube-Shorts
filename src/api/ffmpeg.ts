@@ -24,6 +24,28 @@ async function getFFmpeg(): Promise<FFmpeg> {
   return ffmpeg;
 }
 
+/**
+ * Speeds up an audio file by the given factor while preserving pitch, using
+ * ffmpeg's `atempo` filter (valid for factors between 0.5 and 2.0). Returns a
+ * blob URL for the processed audio.
+ */
+export async function speedUpAudio(audioUrl: string, speed = 1.5): Promise<string> {
+  const ffmpeg = await getFFmpeg();
+
+  const inputData = await fetchFile(audioUrl);
+  await ffmpeg.writeFile('voice_in.mp3', inputData);
+
+  await ffmpeg.exec(['-i', 'voice_in.mp3', '-filter:a', `atempo=${speed}`, 'voice_out.mp3']);
+
+  const output = await ffmpeg.readFile('voice_out.mp3');
+  const blob = new Blob([new Uint8Array(output as Uint8Array)], { type: 'audio/mpeg' });
+
+  await ffmpeg.deleteFile('voice_in.mp3');
+  await ffmpeg.deleteFile('voice_out.mp3');
+
+  return URL.createObjectURL(blob);
+}
+
 async function ensureCaptionFont(ffmpeg: FFmpeg): Promise<void> {
   if (captionFontLoaded) return;
   const fontData = await fetchFile(CAPTION_FONT_URL);

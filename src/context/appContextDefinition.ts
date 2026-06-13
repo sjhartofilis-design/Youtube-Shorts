@@ -12,6 +12,9 @@ export interface AppContextValue {
 
   schedule: ScheduleSlot[];
   setSchedule: React.Dispatch<React.SetStateAction<ScheduleSlot[]>>;
+
+  usedClipIds: number[];
+  addUsedClipIds: (ids: number[]) => void;
 }
 
 export const AppContext = createContext<AppContextValue | undefined>(undefined);
