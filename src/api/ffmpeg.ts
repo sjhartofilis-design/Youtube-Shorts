@@ -15,6 +15,10 @@ async function getFFmpeg(): Promise<FFmpeg> {
   if (ffmpegInstance) return ffmpegInstance;
 
   const ffmpeg = new FFmpeg();
+  ffmpeg.on('log', ({ type, message }) => {
+    console.log(`[ffmpeg:${type}] ${message}`);
+  });
+
   await ffmpeg.load({
     coreURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
     wasmURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
@@ -22,6 +26,43 @@ async function getFFmpeg(): Promise<FFmpeg> {
 
   ffmpegInstance = ffmpeg;
   return ffmpeg;
+}
+
+/** Downloads a file and throws a clear error if it comes back empty. */
+async function fetchFileChecked(url: string, label: string): Promise<Uint8Array> {
+  let data: Uint8Array;
+  try {
+    data = await fetchFile(url);
+  } catch (err) {
+    throw new Error(
+      `Failed to download ${label}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    );
+  }
+  if (!data || data.length === 0) {
+    throw new Error(`Downloaded ${label} is empty (0 bytes) — the source URL may be invalid.`);
+  }
+  console.log(`[ffmpeg] downloaded ${label}: ${data.length} bytes`);
+  return data;
+}
+
+/** Runs an ffmpeg command, logging it and throwing a clear error on non-zero exit. */
+async function execChecked(ffmpeg: FFmpeg, args: string[], label: string): Promise<void> {
+  console.log(`[ffmpeg] running step "${label}": ffmpeg ${args.join(' ')}`);
+  const code = await ffmpeg.exec(args);
+  if (code !== 0) {
+    throw new Error(`ffmpeg step "${label}" failed with exit code ${code}`);
+  }
+}
+
+/** Reads a file from ffmpeg's virtual filesystem and throws if it's empty. */
+async function readFileChecked(ffmpeg: FFmpeg, name: string, label: string): Promise<Uint8Array> {
+  const data = (await ffmpeg.readFile(name)) as Uint8Array;
+  if (!data || data.length === 0) {
+    throw new Error(`ffmpeg step "${label}" produced an empty file (${name}).`);
+  }
+  console.log(`[ffmpeg] step "${label}" produced ${name}: ${data.length} bytes`);
+  return data;
 }
 
 /**
@@ -32,13 +73,17 @@ async function getFFmpeg(): Promise<FFmpeg> {
 export async function speedUpAudio(audioUrl: string, speed = 1.5): Promise<string> {
   const ffmpeg = await getFFmpeg();
 
-  const inputData = await fetchFile(audioUrl);
+  const inputData = await fetchFileChecked(audioUrl, 'voiceover audio');
   await ffmpeg.writeFile('voice_in.mp3', inputData);
 
-  await ffmpeg.exec(['-i', 'voice_in.mp3', '-filter:a', `atempo=${speed}`, 'voice_out.mp3']);
+  await execChecked(
+    ffmpeg,
+    ['-i', 'voice_in.mp3', '-filter:a', `atempo=${speed}`, 'voice_out.mp3'],
+    'speed up voiceover'
+  );
 
-  const output = await ffmpeg.readFile('voice_out.mp3');
-  const blob = new Blob([new Uint8Array(output as Uint8Array)], { type: 'audio/mpeg' });
+  const output = await readFileChecked(ffmpeg, 'voice_out.mp3', 'speed up voiceover');
+  const blob = new Blob([new Uint8Array(output)], { type: 'audio/mpeg' });
 
   await ffmpeg.deleteFile('voice_in.mp3');
   await ffmpeg.deleteFile('voice_out.mp3');
@@ -48,7 +93,7 @@ export async function speedUpAudio(audioUrl: string, speed = 1.5): Promise<strin
 
 async function ensureCaptionFont(ffmpeg: FFmpeg): Promise<void> {
   if (captionFontLoaded) return;
-  const fontData = await fetchFile(CAPTION_FONT_URL);
+  const fontData = await fetchFileChecked(CAPTION_FONT_URL, 'caption font');
   await ffmpeg.writeFile('caption-font.ttf', fontData);
   captionFontLoaded = true;
 }
@@ -76,11 +121,14 @@ async function buildCaptionFilter(ffmpeg: FFmpeg, captions: CaptionChunk[]): Pro
 }
 
 /**
- * Trims each Pexels clip to its calculated segment length, concatenates them
- * in sequence, mutes their audio, and merges in the ElevenLabs voiceover
- * synced from the start. The output is looped/trimmed so its length exactly
- * matches the voiceover's real duration, with any caption chunks burned in
- * as hardcoded subtitles.
+ * Trims each clip to its selected length, concatenates them in sequence,
+ * mutes their audio, and merges in the voiceover synced from the start. The
+ * output is looped/trimmed so its length exactly matches the voiceover's
+ * real duration, with any caption chunks burned in as hardcoded subtitles.
+ *
+ * Every download and ffmpeg step is checked for non-empty output and a
+ * non-zero exit code, so failures surface as a clear error instead of an
+ * empty/zero-byte video file.
  */
 export async function buildFinalVideo(
   clips: StockClip[],
@@ -88,9 +136,13 @@ export async function buildFinalVideo(
   audioDuration: number,
   captions: CaptionChunk[] = []
 ): Promise<string> {
+  if (clips.length === 0) {
+    throw new Error('Cannot build the final video: no clips were provided.');
+  }
+
   const ffmpeg = await getFFmpeg();
 
-  const audioData = await fetchFile(audioUrl);
+  const audioData = await fetchFileChecked(audioUrl, 'voiceover audio');
   await ffmpeg.writeFile('voiceover.mp3', audioData);
 
   const trimmedNames: string[] = [];
@@ -99,25 +151,30 @@ export async function buildFinalVideo(
     const inputName = `clip${i}.mp4`;
     const trimmedName = `trim${i}.mp4`;
 
-    const clipData = await fetchFile(clip.videoUrl);
+    const clipData = await fetchFileChecked(clip.videoUrl, `clip ${i + 1} ("${clip.query}")`);
     await ffmpeg.writeFile(inputName, clipData);
 
-    await ffmpeg.exec([
-      '-i',
-      inputName,
-      '-t',
-      String(clip.duration),
-      '-vf',
-      'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920',
-      '-r',
-      '30',
-      '-an',
-      '-c:v',
-      'libx264',
-      '-preset',
-      'ultrafast',
-      trimmedName,
-    ]);
+    await execChecked(
+      ffmpeg,
+      [
+        '-i',
+        inputName,
+        '-t',
+        String(clip.duration),
+        '-vf',
+        'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920',
+        '-r',
+        '30',
+        '-an',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        trimmedName,
+      ],
+      `trim clip ${i + 1} ("${clip.query}")`
+    );
+    await readFileChecked(ffmpeg, trimmedName, `trim clip ${i + 1} ("${clip.query}")`);
 
     await ffmpeg.deleteFile(inputName);
     trimmedNames.push(trimmedName);
@@ -126,7 +183,12 @@ export async function buildFinalVideo(
   const concatList = trimmedNames.map((name) => `file '${name}'`).join('\n');
   await ffmpeg.writeFile('concat.txt', concatList);
 
-  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c', 'copy', 'concat.mp4']);
+  await execChecked(
+    ffmpeg,
+    ['-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c', 'copy', 'concat.mp4'],
+    'concatenate clips'
+  );
+  await readFileChecked(ffmpeg, 'concat.mp4', 'concatenate clips');
 
   const captionFilter = captions.length > 0 ? await buildCaptionFilter(ffmpeg, captions) : null;
 
@@ -155,10 +217,10 @@ export async function buildFinalVideo(
     'aac',
     'output.mp4',
   ];
-  await ffmpeg.exec(mergeArgs);
+  await execChecked(ffmpeg, mergeArgs, 'merge clips with voiceover and captions');
 
-  const output = await ffmpeg.readFile('output.mp4');
-  const blob = new Blob([new Uint8Array(output as Uint8Array)], { type: 'video/mp4' });
+  const output = await readFileChecked(ffmpeg, 'output.mp4', 'merge clips with voiceover');
+  const blob = new Blob([new Uint8Array(output)], { type: 'video/mp4' });
 
   await ffmpeg.deleteFile('voiceover.mp3');
   await ffmpeg.deleteFile('concat.txt');
