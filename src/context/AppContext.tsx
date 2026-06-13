@@ -68,6 +68,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
   };
 
+  const removeFromQueue = (id: string) => {
+    setQueue((prev) => prev.filter((item) => item.id !== id));
+    setSchedule((prev) => prev.filter((slot) => slot.queueItemId !== id));
+  };
+
   const addUsedClipIds = (ids: number[]) => {
     if (ids.length === 0) return;
     setUsedClipIds((prev) => [...new Set([...prev, ...ids])]);
@@ -82,6 +87,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setQueue,
         addToQueue,
         updateQueueItem,
+        removeFromQueue,
         schedule,
         setSchedule,
         usedClipIds,

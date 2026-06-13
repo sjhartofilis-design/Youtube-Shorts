@@ -19,8 +19,20 @@ const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
 };
 
 export default function QueueCard({ item }: { item: QueueItem }) {
-  const { settings, updateQueueItem, usedClipIds, addUsedClipIds } = useApp();
+  const { settings, updateQueueItem, removeFromQueue, usedClipIds, addUsedClipIds } = useApp();
   const [scheduledTime, setScheduledTime] = useState('');
+
+  const handleDelete = () => {
+    const postedWarning =
+      item.postStatus === 'ready' || item.youtubeVideoId
+        ? '\n\nThis video was already posted. Deleting it here will NOT remove it from YouTube, TikTok, or any other platform — you will need to delete it there separately.'
+        : '';
+    const confirmed = window.confirm(
+      `Are you sure you want to delete this video?${postedWarning}`
+    );
+    if (!confirmed) return;
+    removeFromQueue(item.id);
+  };
 
   const fetchClips = async (extraExcludeIds: number[] = []): Promise<StockClip[]> => {
     const totalDuration = item.audioDuration ?? 0;
@@ -209,6 +221,13 @@ export default function QueueCard({ item }: { item: QueueItem }) {
           <h3 className="text-base font-semibold text-white">{item.title}</h3>
           <p className="mt-1 text-sm text-gray-400">{item.hook}</p>
         </div>
+        <button
+          onClick={handleDelete}
+          title="Delete this video"
+          className="shrink-0 rounded-md border border-red-500/30 px-2.5 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/10"
+        >
+          Delete
+        </button>
       </div>
 
       {readyToPost && (

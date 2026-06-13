@@ -9,6 +9,7 @@ export interface AppContextValue {
   setQueue: React.Dispatch<React.SetStateAction<QueueItem[]>>;
   addToQueue: (item: QueueItem) => void;
   updateQueueItem: (id: string, updates: Partial<QueueItem>) => void;
+  removeFromQueue: (id: string) => void;
 
   schedule: ScheduleSlot[];
   setSchedule: React.Dispatch<React.SetStateAction<ScheduleSlot[]>>;
