@@ -102,7 +102,6 @@ export async function speedUpAudio(audioUrl: string, speed = 1.5): Promise<strin
   return dataUrl;
 }
 
-
 async function ensureCaptionFont(ffmpeg: FFmpeg): Promise<void> {
   if (captionFontLoaded) return;
   const fontData = await fetchFileChecked(CAPTION_FONT_URL, 'caption font');
@@ -142,7 +141,8 @@ function buildClipFilter(index: number, duration: number, isLast: boolean): stri
   const pad = isLast ? ',tpad=stop_mode=clone:stop_duration=3' : '';
   return (
     `[${index}:v]trim=duration=${duration},setpts=PTS-STARTPTS,fps=30,` +
-    `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920${pad}[v${index}]`
+    `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,` +
+    `setsar=1,format=yuv420p${pad}[v${index}]`
   );
 }
 
