@@ -65,10 +65,21 @@ async function readFileChecked(ffmpeg: FFmpeg, name: string, label: string): Pro
   return data;
 }
 
+/** Converts raw bytes to a `data:` URL, which (unlike blob URLs) survives page reloads in persisted state. */
+function uint8ArrayToDataUrl(data: Uint8Array, mimeType: string): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < data.length; i += chunkSize) {
+    binary += String.fromCharCode(...data.subarray(i, i + chunkSize));
+  }
+  return `data:${mimeType};base64,${btoa(binary)}`;
+}
+
 /**
  * Speeds up an audio file by the given factor while preserving pitch, using
  * ffmpeg's `atempo` filter (valid for factors between 0.5 and 2.0). Returns a
- * blob URL for the processed audio.
+ * `data:` URL for the processed audio so it remains valid even if the page
+ * is reloaded before later pipeline steps run.
  */
 export async function speedUpAudio(audioUrl: string, speed = 1.5): Promise<string> {
   const ffmpeg = await getFFmpeg();
@@ -83,13 +94,14 @@ export async function speedUpAudio(audioUrl: string, speed = 1.5): Promise<strin
   );
 
   const output = await readFileChecked(ffmpeg, 'voice_out.mp3', 'speed up voiceover');
-  const blob = new Blob([new Uint8Array(output)], { type: 'audio/mpeg' });
+  const dataUrl = uint8ArrayToDataUrl(output, 'audio/mpeg');
 
   await ffmpeg.deleteFile('voice_in.mp3');
   await ffmpeg.deleteFile('voice_out.mp3');
 
-  return URL.createObjectURL(blob);
+  return dataUrl;
 }
+
 
 async function ensureCaptionFont(ffmpeg: FFmpeg): Promise<void> {
   if (captionFontLoaded) return;
@@ -159,7 +171,18 @@ export async function buildFinalVideo(
 
   const ffmpeg = await getFFmpeg();
 
-  const audioData = await fetchFileChecked(audioUrl, 'voiceover audio');
+  let audioData: Uint8Array;
+  try {
+    audioData = await fetchFileChecked(audioUrl, 'voiceover audio');
+  } catch (err) {
+    if (audioUrl.startsWith('blob:')) {
+      throw new Error(
+        'The voiceover audio is no longer available (its temporary link expired, likely after a page reload). Click "Regenerate Voiceover" to rebuild it.',
+        { cause: err }
+      );
+    }
+    throw err;
+  }
   await ffmpeg.writeFile('voiceover.mp3', audioData);
 
   const clipNames: string[] = [];
