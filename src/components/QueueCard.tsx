@@ -209,21 +209,6 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
-  // Automatically build the final video once the clips, voiceover, and
-  // captions step (ready, errored, or skipped) have all settled.
-  useEffect(() => {
-    if (
-      item.videoStatus === 'ready' &&
-      item.voiceoverStatus === 'ready' &&
-      item.captionsStatus !== 'idle' &&
-      item.captionsStatus !== 'generating' &&
-      item.processStatus === 'not_processed'
-    ) {
-      handleProcess();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.videoStatus, item.voiceoverStatus, item.captionsStatus, item.processStatus]);
-
   const handlePost = async (publishNow: boolean) => {
     if (!item.finalVideoUrl) return;
     updateQueueItem(item.id, { postStatus: 'generating', postError: undefined });
@@ -251,6 +236,16 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   };
 
   const readyToPost = item.processStatus === 'ready' && !!item.finalVideoUrl;
+
+  const canProcess =
+    item.videoStatus === 'ready' &&
+    !!item.clips?.length &&
+    item.voiceoverStatus === 'ready' &&
+    !!item.audioUrl &&
+    !!item.audioDuration &&
+    item.captionsStatus !== 'idle' &&
+    item.captionsStatus !== 'generating' &&
+    item.processStatus !== 'processing';
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-5">
@@ -530,20 +525,39 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         {item.processStatus === 'ready' && item.finalVideoUrl && (
           <div className="flex flex-col gap-2">
             <video src={item.finalVideoUrl} controls className="w-full rounded-md" />
-            <a
-              href={item.finalVideoUrl}
-              download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}_final.mp4`}
-              className="self-start rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
-            >
-              Download Final Video
-            </a>
+            <div className="flex gap-2">
+              <a
+                href={item.finalVideoUrl}
+                download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}_final.mp4`}
+                className="self-start rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
+              >
+                Download Final Video
+              </a>
+              <button
+                onClick={handleProcess}
+                className="self-start rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
+              >
+                Regenerate Final Video
+              </button>
+            </div>
           </div>
         )}
 
         {item.processStatus === 'not_processed' && (
-          <p className="text-xs text-gray-500">
-            Generate video and voiceover to automatically build the final video.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-gray-500">
+              {canProcess
+                ? 'Clips, voiceover, and captions are ready — generate the final video.'
+                : 'Generate the video clips and voiceover first, then generate the final video.'}
+            </p>
+            <button
+              onClick={handleProcess}
+              disabled={!canProcess}
+              className="self-start rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              Generate Final Video
+            </button>
+          </div>
         )}
       </div>
     </div>
