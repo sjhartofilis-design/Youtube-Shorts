@@ -10,11 +10,13 @@ function maskKey(key: string): string {
 }
 
 export default function Settings() {
-  const { settings, setSettings } = useApp();
+  const { settings, setSettings, clearSavedData } = useApp();
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [dataCleared, setDataCleared] = useState(false);
+  const [clearingData, setClearingData] = useState(false);
 
   const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -24,6 +26,23 @@ export default function Settings() {
   const handleSave = () => {
     setSettings(form);
     setSaved(true);
+  };
+
+  const handleClearSavedData = async () => {
+    const confirmed = window.confirm(
+      'This will permanently delete all saved voiceover audio and final processed videos for ' +
+        'queue items. Queue items will revert to "not generated" for those steps, but the ' +
+        'scripts themselves will remain. Continue?'
+    );
+    if (!confirmed) return;
+    setClearingData(true);
+    setDataCleared(false);
+    try {
+      await clearSavedData();
+      setDataCleared(true);
+    } finally {
+      setClearingData(false);
+    }
   };
 
   const handleConnectYouTube = async () => {
@@ -160,6 +179,26 @@ export default function Settings() {
             )}
             {oauthError && <p className="text-xs text-red-400">{oauthError}</p>}
           </div>
+        </section>
+
+        {/* Storage */}
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h2 className="mb-4 text-base font-semibold text-white">Storage</h2>
+          <p className="mb-4 text-sm text-gray-400">
+            Generated voiceovers and final videos are saved in this browser so they survive page
+            refreshes. If storage gets too large or you want to start fresh, clear it here — the
+            queue items themselves won't be deleted.
+          </p>
+          <button
+            onClick={handleClearSavedData}
+            disabled={clearingData}
+            className="self-start rounded-lg border border-red-500/30 px-4 py-2.5 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+          >
+            {clearingData ? 'Clearing…' : 'Clear Saved Data'}
+          </button>
+          {dataCleared && (
+            <p className="mt-2 text-sm text-green-400">Saved voiceovers and videos cleared ✓</p>
+          )}
         </section>
 
         <div className="flex items-center gap-4">

@@ -9,6 +9,7 @@ import { transcribeAudio } from '../api/transcribe';
 import { uploadShort } from '../api/youtube';
 import { getAudioDuration } from '../utils/narration';
 import { captionsToSrt, groupWordsIntoCaptions } from '../utils/captions';
+import { assetKeys, saveAsset, urlToBlob } from '../utils/storage';
 import StatusBadge from './StatusBadge';
 
 const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
@@ -115,6 +116,11 @@ export default function QueueCard({ item }: { item: QueueItem }) {
       );
       const audioUrl = await speedUpAudio(rawAudioUrl, 1.5);
       const audioDuration = await getAudioDuration(audioUrl);
+      try {
+        await saveAsset(assetKeys.audio(item.id), await urlToBlob(audioUrl));
+      } catch (err) {
+        console.warn('Failed to save voiceover to IndexedDB for persistence', err);
+      }
       updateQueueItem(item.id, {
         voiceoverStatus: 'ready',
         audioUrl,
@@ -189,6 +195,11 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         item.audioDuration,
         item.captions ?? []
       );
+      try {
+        await saveAsset(assetKeys.finalVideo(item.id), await urlToBlob(finalVideoUrl));
+      } catch (err) {
+        console.warn('Failed to save final video to IndexedDB for persistence', err);
+      }
       updateQueueItem(item.id, { processStatus: 'ready', finalVideoUrl });
     } catch (err) {
       updateQueueItem(item.id, {

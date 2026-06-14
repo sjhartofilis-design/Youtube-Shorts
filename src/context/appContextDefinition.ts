@@ -16,6 +16,8 @@ export interface AppContextValue {
 
   usedClipIds: number[];
   addUsedClipIds: (ids: number[]) => void;
+
+  clearSavedData: () => Promise<void>;
 }
 
 export const AppContext = createContext<AppContextValue | undefined>(undefined);
