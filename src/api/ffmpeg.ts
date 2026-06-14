@@ -11,12 +11,20 @@ const CAPTION_FONT_URL =
 let ffmpegInstance: FFmpeg | null = null;
 let captionFontLoaded = false;
 
+/** Rolling buffer of the most recent ffmpeg log lines, used to surface the real error on failure. */
+const MAX_LOG_LINES = 40;
+let recentLogLines: string[] = [];
+
 async function getFFmpeg(): Promise<FFmpeg> {
   if (ffmpegInstance) return ffmpegInstance;
 
   const ffmpeg = new FFmpeg();
   ffmpeg.on('log', ({ type, message }) => {
     console.log(`[ffmpeg:${type}] ${message}`);
+    recentLogLines.push(message);
+    if (recentLogLines.length > MAX_LOG_LINES) {
+      recentLogLines.shift();
+    }
   });
 
   await ffmpeg.load({
@@ -65,12 +73,16 @@ async function fetchFileChecked(url: string, label: string): Promise<Uint8Array>
   );
 }
 
-/** Runs an ffmpeg command, logging it and throwing a clear error on non-zero exit. */
+/** Runs an ffmpeg command, logging it and throwing a clear error (including recent ffmpeg output) on non-zero exit. */
 async function execChecked(ffmpeg: FFmpeg, args: string[], label: string): Promise<void> {
   console.log(`[ffmpeg] running step "${label}": ffmpeg ${args.join(' ')}`);
+  recentLogLines = [];
   const code = await ffmpeg.exec(args);
   if (code !== 0) {
-    throw new Error(`ffmpeg step "${label}" failed with exit code ${code}`);
+    const tail = recentLogLines.slice(-10).join('\n');
+    throw new Error(
+      `ffmpeg step "${label}" failed with exit code ${code}${tail ? `:\n${tail}` : ''}`
+    );
   }
 }
 
