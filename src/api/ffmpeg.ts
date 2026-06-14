@@ -28,22 +28,41 @@ async function getFFmpeg(): Promise<FFmpeg> {
   return ffmpeg;
 }
 
-/** Downloads a file and throws a clear error if it comes back empty. */
+/** How many times to retry a failed download before giving up. */
+const DOWNLOAD_RETRIES = 3;
+
+/** Downloads a file, retrying transient network failures, and throws a clear error if it comes back empty. */
 async function fetchFileChecked(url: string, label: string): Promise<Uint8Array> {
-  let data: Uint8Array;
-  try {
-    data = await fetchFile(url);
-  } catch (err) {
-    throw new Error(
-      `Failed to download ${label}: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err }
-    );
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
+    let data: Uint8Array;
+    try {
+      data = await fetchFile(url);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < DOWNLOAD_RETRIES) {
+        const delay = 1000 * attempt;
+        console.log(
+          `[ffmpeg] download of ${label} failed (attempt ${attempt}/${DOWNLOAD_RETRIES}), retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw new Error(
+        `Failed to download ${label}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
+      );
+    }
+    if (!data || data.length === 0) {
+      throw new Error(`Downloaded ${label} is empty (0 bytes) — the source URL may be invalid.`);
+    }
+    console.log(`[ffmpeg] downloaded ${label}: ${data.length} bytes`);
+    return data;
   }
-  if (!data || data.length === 0) {
-    throw new Error(`Downloaded ${label} is empty (0 bytes) — the source URL may be invalid.`);
-  }
-  console.log(`[ffmpeg] downloaded ${label}: ${data.length} bytes`);
-  return data;
+  throw new Error(
+    `Failed to download ${label}: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+    { cause: lastErr }
+  );
 }
 
 /** Runs an ffmpeg command, logging it and throwing a clear error on non-zero exit. */
