@@ -173,3 +173,42 @@ export async function selectClipsForVoiceover(
 
   return { clips, newUsedIds };
 }
+
+/**
+ * Selects a single replacement clip for the given query and target
+ * duration, excluding any already-used Pexels video IDs (e.g. the clip
+ * being replaced, other clips in this video, and clips used elsewhere).
+ * Falls back to a broader version of the query if no unused results are
+ * found. Returns the replacement clip along with its Pexels ID so callers
+ * can record it as used.
+ */
+export async function selectReplacementClip(
+  apiKey: string,
+  query: string,
+  targetDuration: number,
+  excludeIds: number[] = []
+): Promise<{ clip: StockClip; newUsedId: number }> {
+  if (!apiKey) {
+    throw new Error('Pexels API key is missing. Add it in Settings.');
+  }
+
+  const candidate = await findUnusedClip(apiKey, query, new Set(excludeIds));
+  if (!candidate) {
+    throw new Error(`No alternative Pexels clips found for "${query}".`);
+  }
+
+  const naturalDuration = Math.min(candidate.sourceDuration, MAX_CLIP_DURATION);
+  const duration = Math.min(naturalDuration, targetDuration > 0 ? targetDuration : naturalDuration);
+
+  return {
+    clip: {
+      id: candidate.id,
+      query: candidate.query,
+      videoUrl: candidate.videoUrl,
+      thumbnailUrl: candidate.thumbnailUrl,
+      duration,
+      sourceDuration: candidate.sourceDuration,
+    },
+    newUsedId: candidate.id,
+  };
+}

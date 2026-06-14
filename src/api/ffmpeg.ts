@@ -121,10 +121,27 @@ async function buildCaptionFilter(ffmpeg: FFmpeg, captions: CaptionChunk[]): Pro
 }
 
 /**
- * Trims each clip to its selected length, concatenates them in sequence,
- * mutes their audio, and merges in the voiceover synced from the start. The
- * output is looped/trimmed so its length exactly matches the voiceover's
- * real duration, with any caption chunks burned in as hardcoded subtitles.
+ * Builds a `trim`+`setpts`+`fps`+`scale`+`crop` filter chain for a single
+ * clip input, labeled `[v{index}]`. The last clip gets a few extra seconds
+ * of padding (cloning its final frame) as a safety margin so the
+ * concatenated output is never shorter than the voiceover.
+ */
+function buildClipFilter(index: number, duration: number, isLast: boolean): string {
+  const pad = isLast ? ',tpad=stop_mode=clone:stop_duration=3' : '';
+  return (
+    `[${index}:v]trim=duration=${duration},setpts=PTS-STARTPTS,fps=30,` +
+    `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920${pad}[v${index}]`
+  );
+}
+
+/**
+ * Builds the final video in a single ffmpeg pass: each clip is trimmed,
+ * scaled/cropped, and concatenated via a `filter_complex` graph, captions
+ * (if any) are burned in with `drawtext`, and the result is merged with the
+ * voiceover audio and trimmed to its exact duration. Doing this in one pass
+ * (rather than re-encoding each clip and then re-encoding the concatenation)
+ * roughly halves the amount of video encoding work, which significantly
+ * speeds up processing.
  *
  * Every download and ffmpeg step is checked for non-empty output and a
  * non-zero exit code, so failures surface as a clear error instead of an
@@ -145,70 +162,40 @@ export async function buildFinalVideo(
   const audioData = await fetchFileChecked(audioUrl, 'voiceover audio');
   await ffmpeg.writeFile('voiceover.mp3', audioData);
 
-  const trimmedNames: string[] = [];
+  const clipNames: string[] = [];
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i];
     const inputName = `clip${i}.mp4`;
-    const trimmedName = `trim${i}.mp4`;
-
     const clipData = await fetchFileChecked(clip.videoUrl, `clip ${i + 1} ("${clip.query}")`);
     await ffmpeg.writeFile(inputName, clipData);
-
-    await execChecked(
-      ffmpeg,
-      [
-        '-i',
-        inputName,
-        '-t',
-        String(clip.duration),
-        '-vf',
-        'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920',
-        '-r',
-        '30',
-        '-an',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'ultrafast',
-        trimmedName,
-      ],
-      `trim clip ${i + 1} ("${clip.query}")`
-    );
-    await readFileChecked(ffmpeg, trimmedName, `trim clip ${i + 1} ("${clip.query}")`);
-
-    await ffmpeg.deleteFile(inputName);
-    trimmedNames.push(trimmedName);
+    clipNames.push(inputName);
   }
 
-  const concatList = trimmedNames.map((name) => `file '${name}'`).join('\n');
-  await ffmpeg.writeFile('concat.txt', concatList);
-
-  await execChecked(
-    ffmpeg,
-    ['-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c', 'copy', 'concat.mp4'],
-    'concatenate clips'
+  const clipFilters = clips.map((clip, i) =>
+    buildClipFilter(i, clip.duration, i === clips.length - 1)
   );
-  await readFileChecked(ffmpeg, 'concat.mp4', 'concatenate clips');
+  const concatInputs = clips.map((_, i) => `[v${i}]`).join('');
+  const concatFilter = `${concatInputs}concat=n=${clips.length}:v=1:a=0[vcat]`;
 
   const captionFilter = captions.length > 0 ? await buildCaptionFilter(ffmpeg, captions) : null;
+  const videoOutLabel = captionFilter ? '[vout]' : '[vcat]';
+  const captionStage = captionFilter ? `;[vcat]${captionFilter}[vout]` : '';
 
-  // Loop the concatenated footage if needed and trim to the voiceover's exact
-  // duration so the final video length always matches the audio precisely.
-  // Burn in captions (if any) on the same pass.
+  const filterComplex = `${clipFilters.join(';')};${concatFilter}${captionStage}`;
+  const audioInputIndex = clips.length;
+
   const mergeArgs = [
-    '-stream_loop',
-    '-1',
-    '-i',
-    'concat.mp4',
+    ...clipNames.flatMap((name) => ['-i', name]),
     '-i',
     'voiceover.mp3',
+    '-filter_complex',
+    filterComplex,
     '-map',
-    '0:v:0',
+    videoOutLabel,
     '-map',
-    '1:a:0',
+    `${audioInputIndex}:a`,
     '-t',
     String(audioDuration),
-    ...(captionFilter ? ['-vf', captionFilter] : []),
     '-c:v',
     'libx264',
     '-preset',
@@ -217,16 +204,14 @@ export async function buildFinalVideo(
     'aac',
     'output.mp4',
   ];
-  await execChecked(ffmpeg, mergeArgs, 'merge clips with voiceover and captions');
+  await execChecked(ffmpeg, mergeArgs, 'build final video');
 
-  const output = await readFileChecked(ffmpeg, 'output.mp4', 'merge clips with voiceover');
+  const output = await readFileChecked(ffmpeg, 'output.mp4', 'build final video');
   const blob = new Blob([new Uint8Array(output)], { type: 'video/mp4' });
 
   await ffmpeg.deleteFile('voiceover.mp3');
-  await ffmpeg.deleteFile('concat.txt');
-  await ffmpeg.deleteFile('concat.mp4');
   await ffmpeg.deleteFile('output.mp4');
-  for (const name of trimmedNames) {
+  for (const name of clipNames) {
     await ffmpeg.deleteFile(name);
   }
   for (let i = 0; i < captions.length; i++) {
@@ -235,3 +220,4 @@ export async function buildFinalVideo(
 
   return URL.createObjectURL(blob);
 }
+

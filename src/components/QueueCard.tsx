@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ProcessStatus, QueueItem, StockClip } from '../types';
 import { VOICE_ID_MAP } from '../types';
 import { useApp } from '../hooks/useApp';
-import { selectClipsForVoiceover } from '../api/pexels';
+import { selectClipsForVoiceover, selectReplacementClip } from '../api/pexels';
 import { generateVoiceover } from '../api/elevenlabs';
 import { buildFinalVideo, speedUpAudio } from '../api/ffmpeg';
 import { transcribeAudio } from '../api/transcribe';
@@ -21,6 +21,7 @@ const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
 export default function QueueCard({ item }: { item: QueueItem }) {
   const { settings, updateQueueItem, removeFromQueue, usedClipIds, addUsedClipIds } = useApp();
   const [scheduledTime, setScheduledTime] = useState('');
+  const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
 
   const handleDelete = () => {
     const postedWarning =
@@ -71,6 +72,35 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   };
 
   const handleTryDifferentClips = () => handleGenerateVideo(true);
+
+  const handleReplaceClip = async (index: number) => {
+    if (!item.clips) return;
+    const clipToReplace = item.clips[index];
+    setReplacingIndex(index);
+    try {
+      const excludeIds = [...usedClipIds, ...item.clips.map((c) => c.id)];
+      const { clip, newUsedId } = await selectReplacementClip(
+        settings.pexelsApiKey,
+        clipToReplace.query,
+        clipToReplace.duration,
+        excludeIds
+      );
+      addUsedClipIds([newUsedId]);
+      const updatedClips = item.clips.map((c, i) => (i === index ? clip : c));
+      updateQueueItem(item.id, {
+        clips: updatedClips,
+        processStatus: 'not_processed',
+        finalVideoUrl: undefined,
+        processError: undefined,
+      });
+    } catch (err) {
+      updateQueueItem(item.id, {
+        videoError: err instanceof Error ? err.message : 'Failed to replace clip',
+      });
+    } finally {
+      setReplacingIndex(null);
+    }
+  };
 
   const handleGenerateVoiceover = async () => {
     updateQueueItem(item.id, { voiceoverStatus: 'generating', voiceoverError: undefined });
@@ -372,7 +402,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
           {item.videoStatus === 'ready' && item.clips && (
             <div className="grid grid-cols-2 gap-2">
               {item.clips.map((clip, idx) => (
-                <div key={`${clip.query}-${idx}`} className="flex flex-col gap-1">
+                <div key={`${clip.id}-${idx}`} className="flex flex-col gap-1">
                   {clip.thumbnailUrl && (
                     <img
                       src={clip.thumbnailUrl}
@@ -384,6 +414,13 @@ export default function QueueCard({ item }: { item: QueueItem }) {
                     {clip.query}
                   </p>
                   <p className="text-xs text-gray-500">{clip.duration.toFixed(1)}s</p>
+                  <button
+                    onClick={() => handleReplaceClip(idx)}
+                    disabled={replacingIndex !== null}
+                    className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-gray-200 hover:bg-white/10 disabled:opacity-50"
+                  >
+                    {replacingIndex === idx ? 'Replacing…' : 'Replace'}
+                  </button>
                 </div>
               ))}
             </div>
