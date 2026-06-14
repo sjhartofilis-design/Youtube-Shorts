@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useApp } from '../hooks/useApp';
-import type { ScheduleSlot, ScheduleStatus } from '../types';
+import type { QueueItem, ScheduleSlot, ScheduleStatus } from '../types';
+import { uploadShort } from '../api/youtube';
+import StatusBadge from '../components/StatusBadge';
 
 // Fixed daily posting times in Eastern Time (the audience's local time).
 const TIME_SLOTS: { hour: number; minute: number; label: string }[] = [
@@ -72,42 +74,73 @@ export default function Schedule() {
     return 'scheduled';
   };
 
-  const handleAutoSchedule = () => {
-    const newSlots: ScheduleSlot[] = [];
-    ([1, 2] as const).forEach((channel) => {
-      const items = queue.filter((q) => q.channel === channel).slice(0, TIME_SLOTS.length);
-
-      items.forEach((item, idx) => {
-        const slot = TIME_SLOTS[idx];
-        const time = todayAtEastern(slot.hour, slot.minute);
-        newSlots.push({
+  /** Uploads the item's final video to YouTube, scheduled to go live at `time`. */
+  const schedulePost = async (item: QueueItem, channel: 1 | 2, time: Date) => {
+    if (!item.finalVideoUrl) return;
+    updateQueueItem(item.id, { postStatus: 'generating', postError: undefined });
+    try {
+      const videoId = await uploadShort({
+        accessToken: settings.youtubeAccessToken,
+        videoUrl: item.finalVideoUrl,
+        title: item.title,
+        hashtags: item.hashtags,
+        description: item.hook,
+        scheduledTime: time.toISOString(),
+      });
+      updateQueueItem(item.id, {
+        postStatus: 'ready',
+        youtubeVideoId: videoId,
+        postedTime: new Date().toISOString(),
+        scheduledTime: time.toISOString(),
+      });
+      setSchedule((prev) => [
+        ...prev.filter((s) => s.queueItemId !== item.id),
+        {
           id: `${item.id}-slot`,
           queueItemId: item.id,
           channel,
           channelName: channelName(channel),
           title: item.title,
           time: time.toISOString(),
-          status: deriveStatus(item.id),
-        });
-        updateQueueItem(item.id, { scheduledTime: time.toISOString() });
+          status: 'posted',
+        },
+      ]);
+    } catch (err) {
+      updateQueueItem(item.id, {
+        postStatus: 'error',
+        postError: err instanceof Error ? err.message : 'Failed to post to YouTube',
       });
-    });
-    setSchedule(newSlots);
+    }
+  };
+
+  const readyToPost = queue.filter(
+    (item) => item.finalVideoStatus === 'ready' && item.postStatus !== 'ready'
+  );
+
+  const handleAutoSchedule = async () => {
+    for (const channel of [1, 2] as const) {
+      const items = readyToPost
+        .filter((q) => q.channel === channel)
+        .slice(0, TIME_SLOTS.length);
+
+      for (let idx = 0; idx < items.length; idx++) {
+        const slot = TIME_SLOTS[idx];
+        const time = todayAtEastern(slot.hour, slot.minute);
+        await schedulePost(items[idx], channel, time);
+      }
+    }
   };
 
   const handleDrop = (channel: 1 | 2, slotIndex: number) => {
-    if (!draggingId) return;
+    const itemId = draggingId;
+    setDraggingId(null);
+    if (!itemId) return;
+    const item = queue.find((q) => q.id === itemId);
+    if (!item || item.finalVideoStatus !== 'ready' || item.postStatus === 'generating') return;
+
     const slot = TIME_SLOTS[slotIndex];
     const time = todayAtEastern(slot.hour, slot.minute);
-    setSchedule((prev) =>
-      prev.map((slot) =>
-        slot.queueItemId === draggingId
-          ? { ...slot, channel, channelName: channelName(channel), time: time.toISOString() }
-          : slot
-      )
-    );
-    updateQueueItem(draggingId, { scheduledTime: time.toISOString() });
-    setDraggingId(null);
+    schedulePost(item, channel, time);
   };
 
   const slotsForCell = (channel: 1 | 2, slotIndex: number) => {
@@ -125,17 +158,55 @@ export default function Schedule() {
         <div>
           <h1 className="mb-2 text-2xl font-bold text-white">Schedule</h1>
           <p className="text-sm text-gray-400">
-            Drag and drop videos to reschedule. Default schedule posts 5 videos per channel each
-            day at 7:30 AM, 12:00 PM, 1:30 PM, 7:00 PM, and 9:00 PM Eastern Time (10 videos total
-            per day).
+            Drag a video from "Ready to Post" onto a time slot to upload it to YouTube, scheduled
+            to go live at that time (5 daily slots per channel: 7:30 AM, 12:00 PM, 1:30 PM, 7:00
+            PM, and 9:00 PM Eastern Time).
           </p>
         </div>
         <button
           onClick={handleAutoSchedule}
-          className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500"
+          disabled={readyToPost.length === 0}
+          className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
         >
           Auto-Schedule
         </button>
+      </div>
+
+      {!settings.youtubeAccessToken && (
+        <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-400">
+          Connect your YouTube account in Settings before scheduling posts.
+        </div>
+      )}
+
+      <div className="mb-6 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+        <h2 className="mb-2 text-sm font-semibold text-white">Ready to Post</h2>
+        {readyToPost.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            Upload a final edited video on the Queue page to make it available here.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {readyToPost.map((item) => (
+              <div
+                key={item.id}
+                draggable={item.postStatus !== 'generating'}
+                onDragStart={() => setDraggingId(item.id)}
+                className="flex max-w-xs cursor-move flex-col gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm text-gray-200">{item.title}</span>
+                  <StatusBadge status={item.postStatus} />
+                </div>
+                <span className="text-xs text-gray-500">
+                  {channelName(item.channel)} · Channel {item.channel}
+                </span>
+                {item.postStatus === 'error' && item.postError && (
+                  <span className="text-xs text-red-400">{item.postError}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="mb-4 flex gap-4 text-xs text-gray-400">
@@ -171,12 +242,10 @@ export default function Schedule() {
                 onDrop={() => handleDrop(channel, slotIndex)}
                 className="min-h-[60px] border-l border-white/5 p-2"
               >
-                {slotsForCell(channel, slotIndex).map((s) => (
+                {slotsForCell(channel, slotIndex).map((s: ScheduleSlot) => (
                   <div
                     key={s.id}
-                    draggable
-                    onDragStart={() => setDraggingId(s.queueItemId)}
-                    className="mb-1 flex cursor-move items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-gray-200"
+                    className="mb-1 flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-gray-200"
                   >
                     <span
                       className={`h-2 w-2 shrink-0 rounded-full ${STATUS_COLORS[deriveStatus(s.queueItemId)]}`}
@@ -192,7 +261,8 @@ export default function Schedule() {
 
       {schedule.length === 0 && (
         <p className="mt-4 text-center text-sm text-gray-500">
-          No videos scheduled yet. Click "Auto-Schedule" to fill the 5 daily slots per channel.
+          No videos scheduled yet. Drag a video from "Ready to Post" onto a time slot, or click
+          "Auto-Schedule".
         </p>
       )}
     </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ChangeEvent } from 'react';
 import type { QueueItem, StockClip } from '../types';
 import { VOICE_ID_MAP } from '../types';
 import { useApp } from '../hooks/useApp';
@@ -14,6 +14,8 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
   const [downloadingClips, setDownloadingClips] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [videoUploadError, setVideoUploadError] = useState<string | null>(null);
 
   const handleDelete = () => {
     const confirmed = window.confirm('Are you sure you want to delete this video?');
@@ -160,6 +162,24 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
+  const handleFinalVideoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setVideoUploadError(null);
+    setUploadingVideo(true);
+    try {
+      await saveAsset(assetKeys.video(item.id), file);
+      const finalVideoUrl = URL.createObjectURL(file);
+      updateQueueItem(item.id, { finalVideoUrl, finalVideoStatus: 'ready' });
+    } catch (err) {
+      setVideoUploadError(err instanceof Error ? err.message : 'Failed to save final video');
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
   const downloadsReady = item.voiceoverStatus === 'ready' && item.videoStatus === 'ready';
 
   return (
@@ -179,6 +199,36 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         >
           Delete
         </button>
+      </div>
+
+      {/* Final Edited Video */}
+      <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-white">Final Edited Video</span>
+          <StatusBadge status={item.finalVideoStatus} />
+        </div>
+        <p className="text-xs text-gray-500">
+          Upload your fully edited video (with audio and captions already combined). Once
+          uploaded, you can schedule it to post on YouTube from the Schedule page.
+        </p>
+        {item.finalVideoUrl && (
+          <video src={item.finalVideoUrl} controls className="max-h-64 w-auto rounded-md" />
+        )}
+        {videoUploadError && <p className="text-xs text-red-400">{videoUploadError}</p>}
+        <label className="self-start rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 cursor-pointer">
+          {uploadingVideo
+            ? 'Saving…'
+            : item.finalVideoStatus === 'ready'
+              ? 'Replace Final Video'
+              : 'Upload Final Video'}
+          <input
+            type="file"
+            accept="video/*"
+            onChange={handleFinalVideoUpload}
+            disabled={uploadingVideo}
+            className="hidden"
+          />
+        </label>
       </div>
 
       {downloadsReady && (

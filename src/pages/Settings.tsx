@@ -30,8 +30,9 @@ export default function Settings() {
 
   const handleClearSavedData = async () => {
     const confirmed = window.confirm(
-      'This will permanently delete all saved voiceover audio for queue items. Voiceover status ' +
-        'will revert to "not generated", but the scripts themselves will remain. Continue?'
+      'This will permanently delete all saved voiceover audio and uploaded final videos for queue ' +
+        'items. Their statuses will revert to "not generated"/"not uploaded", but the scripts ' +
+        'themselves will remain. Continue?'
     );
     if (!confirmed) return;
     setClearingData(true);
@@ -184,9 +185,9 @@ export default function Settings() {
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
           <h2 className="mb-4 text-base font-semibold text-white">Storage</h2>
           <p className="mb-4 text-sm text-gray-400">
-            Generated voiceovers are saved in this browser so they survive page refreshes. If
-            storage gets too large or you want to start fresh, clear it here — the queue items
-            themselves won't be deleted.
+            Generated voiceovers and uploaded final videos are saved in this browser so they
+            survive page refreshes. If storage gets too large or you want to start fresh, clear it
+            here — the queue items themselves won't be deleted.
           </p>
           <button
             onClick={handleClearSavedData}
@@ -196,7 +197,7 @@ export default function Settings() {
             {clearingData ? 'Clearing…' : 'Clear Saved Data'}
           </button>
           {dataCleared && (
-            <p className="mt-2 text-sm text-green-400">Saved voiceovers cleared ✓</p>
+            <p className="mt-2 text-sm text-green-400">Saved voiceovers and videos cleared ✓</p>
           )}
         </section>
 

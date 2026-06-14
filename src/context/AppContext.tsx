@@ -48,18 +48,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [settings]);
 
   useEffect(() => {
-    // The voiceover audio is persisted separately in IndexedDB, so strip it
-    // out of the localStorage copy of the queue to avoid exceeding its small
-    // storage quota.
+    // The voiceover audio and final video are persisted separately in
+    // IndexedDB, so strip them out of the localStorage copy of the queue to
+    // avoid exceeding its small storage quota.
     const persistedQueue = queue.map((item) => ({
       ...item,
       audioUrl: undefined,
+      finalVideoUrl: undefined,
     }));
     localStorage.setItem(QUEUE_KEY, JSON.stringify(persistedQueue));
   }, [queue]);
 
-  // On mount, restore any generated voiceover audio from IndexedDB and
-  // re-attach it to the matching queue items as a fresh object URL.
+  // On mount, restore any generated voiceover audio / uploaded final video
+  // from IndexedDB and re-attach them to the matching queue items as fresh
+  // object URLs.
   useEffect(() => {
     let cancelled = false;
 
@@ -74,6 +76,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
               updates.audioUrl = URL.createObjectURL(audioBlob);
             } else {
               updates.voiceoverStatus = 'idle';
+            }
+          }
+
+          if (item.finalVideoStatus === 'ready' && !item.finalVideoUrl) {
+            const videoBlob = await loadAsset(assetKeys.video(item.id));
+            if (videoBlob) {
+              updates.finalVideoUrl = URL.createObjectURL(videoBlob);
+            } else {
+              updates.finalVideoStatus = 'idle';
             }
           }
 
@@ -123,6 +134,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setQueue((prev) => prev.filter((item) => item.id !== id));
     setSchedule((prev) => prev.filter((slot) => slot.queueItemId !== id));
     deleteAsset(assetKeys.audio(id));
+    deleteAsset(assetKeys.video(id));
   };
 
   const addUsedClipIds = (ids: number[]) => {
@@ -137,6 +149,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...item,
         audioUrl: undefined,
         voiceoverStatus: item.voiceoverStatus === 'ready' ? 'idle' : item.voiceoverStatus,
+        finalVideoUrl: undefined,
+        finalVideoStatus: item.finalVideoStatus === 'ready' ? 'idle' : item.finalVideoStatus,
       }))
     );
   };

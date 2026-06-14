@@ -81,6 +81,7 @@ export async function clearAllAssets(): Promise<void> {
 
 export const assetKeys = {
   audio: (queueItemId: string) => `audio:${queueItemId}`,
+  video: (queueItemId: string) => `video:${queueItemId}`,
 };
 
 /** Fetches a `data:`/`blob:` URL and returns its contents as a `Blob`. */

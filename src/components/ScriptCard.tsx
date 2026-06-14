@@ -39,6 +39,7 @@ export default function ScriptCard({ script, category, onChange }: ScriptCardPro
       videoStatus: 'idle',
       clipRank: 0,
       voiceoverStatus: 'idle',
+      finalVideoStatus: 'idle',
       postStatus: 'idle',
     });
     setAdded(true);

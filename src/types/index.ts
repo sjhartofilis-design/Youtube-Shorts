@@ -34,7 +34,10 @@ export interface QueueItem extends Script {
   audioDuration?: number; // exact voiceover duration in seconds
   voiceoverError?: string;
 
-  postStatus: TaskStatus;
+  finalVideoStatus: TaskStatus; // 'ready' once the user has uploaded their edited final video
+  finalVideoUrl?: string;
+
+  postStatus: TaskStatus; // status of posting finalVideoUrl to YouTube
   postError?: string;
   youtubeVideoId?: string;
 
