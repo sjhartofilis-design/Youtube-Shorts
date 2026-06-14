@@ -1,37 +1,22 @@
-import { useEffect, useState } from 'react';
-import type { ProcessStatus, QueueItem, StockClip } from '../types';
+import { useState } from 'react';
+import type { QueueItem, StockClip } from '../types';
 import { VOICE_ID_MAP } from '../types';
 import { useApp } from '../hooks/useApp';
 import { selectClipsForVoiceover, selectReplacementClip } from '../api/pexels';
 import { generateVoiceover } from '../api/elevenlabs';
-import { buildFinalVideo, speedUpAudio } from '../api/ffmpeg';
-import { transcribeAudio } from '../api/transcribe';
-import { uploadShort } from '../api/youtube';
+import { speedUpAudio } from '../api/ffmpeg';
 import { getAudioDuration } from '../utils/narration';
-import { captionsToSrt, groupWordsIntoCaptions } from '../utils/captions';
 import { assetKeys, saveAsset, urlToBlob } from '../utils/storage';
 import StatusBadge from './StatusBadge';
 
-const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
-  not_processed: 'Not Processed',
-  processing: 'Processing',
-  ready: 'Ready',
-  error: 'Error',
-};
-
 export default function QueueCard({ item }: { item: QueueItem }) {
   const { settings, updateQueueItem, removeFromQueue, usedClipIds, addUsedClipIds } = useApp();
-  const [scheduledTime, setScheduledTime] = useState('');
   const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
+  const [downloadingClips, setDownloadingClips] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const handleDelete = () => {
-    const postedWarning =
-      item.postStatus === 'ready' || item.youtubeVideoId
-        ? '\n\nThis video was already posted. Deleting it here will NOT remove it from YouTube, TikTok, or any other platform — you will need to delete it there separately.'
-        : '';
-    const confirmed = window.confirm(
-      `Are you sure you want to delete this video?${postedWarning}`
-    );
+    const confirmed = window.confirm('Are you sure you want to delete this video?');
     if (!confirmed) return;
     removeFromQueue(item.id);
   };
@@ -60,9 +45,6 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         videoStatus: 'ready',
         clips,
         clipRank: retry ? item.clipRank + 1 : 0,
-        processStatus: 'not_processed',
-        finalVideoUrl: undefined,
-        processError: undefined,
       });
     } catch (err) {
       updateQueueItem(item.id, {
@@ -88,12 +70,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
       );
       addUsedClipIds([newUsedId]);
       const updatedClips = item.clips.map((c, i) => (i === index ? clip : c));
-      updateQueueItem(item.id, {
-        clips: updatedClips,
-        processStatus: 'not_processed',
-        finalVideoUrl: undefined,
-        processError: undefined,
-      });
+      updateQueueItem(item.id, { clips: updatedClips });
     } catch (err) {
       updateQueueItem(item.id, {
         videoError: err instanceof Error ? err.message : 'Failed to replace clip',
@@ -127,13 +104,6 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         audioDuration,
         videoStatus: 'idle',
         clips: undefined,
-        captionsStatus: 'idle',
-        captions: undefined,
-        captionsSrt: undefined,
-        captionsError: undefined,
-        processStatus: 'not_processed',
-        finalVideoUrl: undefined,
-        processError: undefined,
       });
     } catch (err) {
       updateQueueItem(item.id, {
@@ -143,109 +113,54 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
-  const handleGenerateCaptions = async () => {
-    if (!item.audioUrl) return;
-    updateQueueItem(item.id, { captionsStatus: 'generating', captionsError: undefined });
-    try {
-      const words = await transcribeAudio(settings.elevenLabsApiKey, item.audioUrl);
-      const captions = groupWordsIntoCaptions(words);
-      updateQueueItem(item.id, {
-        captionsStatus: 'ready',
-        captions,
-        captionsSrt: captionsToSrt(captions),
-        processStatus: 'not_processed',
-        finalVideoUrl: undefined,
-        processError: undefined,
-      });
-    } catch (err) {
-      updateQueueItem(item.id, {
-        captionsStatus: 'error',
-        captionsError: err instanceof Error ? err.message : 'Caption transcription failed',
-      });
+  const handleDownloadClips = async () => {
+    if (!item.clips?.length) return;
+    setDownloadError(null);
+
+    const safeTitle = item.title.replace(/[^a-z0-9]+/gi, '_');
+
+    if (item.clips.length === 1) {
+      const a = document.createElement('a');
+      a.href = item.clips[0].videoUrl;
+      a.download = `${safeTitle}_clip1.mp4`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
     }
-  };
 
-  const handleSkipCaptions = () => {
-    updateQueueItem(item.id, {
-      captionsStatus: 'ready',
-      captions: [],
-      captionsSrt: undefined,
-      captionsError: undefined,
-      processStatus: 'not_processed',
-      finalVideoUrl: undefined,
-      processError: undefined,
-    });
-  };
-
-  // Automatically transcribe the voiceover for captions once it's ready.
-  useEffect(() => {
-    if (item.voiceoverStatus === 'ready' && item.captionsStatus === 'idle') {
-      handleGenerateCaptions();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.voiceoverStatus, item.captionsStatus]);
-
-  const handleProcess = async () => {
-    if (!item.clips?.length || !item.audioUrl || !item.audioDuration) return;
-    updateQueueItem(item.id, { processStatus: 'processing', processError: undefined });
+    setDownloadingClips(true);
     try {
-      const finalVideoUrl = await buildFinalVideo(
-        item.clips,
-        item.audioUrl,
-        item.audioDuration,
-        item.captions ?? []
-      );
-      try {
-        await saveAsset(assetKeys.finalVideo(item.id), await urlToBlob(finalVideoUrl));
-      } catch (err) {
-        console.warn('Failed to save final video to IndexedDB for persistence', err);
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      for (let i = 0; i < item.clips.length; i++) {
+        const clip = item.clips[i];
+        const response = await fetch(clip.videoUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to download clip ${i + 1} (HTTP ${response.status})`);
+        }
+        const blob = await response.blob();
+        zip.file(`clip${i + 1}.mp4`, blob);
       }
-      updateQueueItem(item.id, { processStatus: 'ready', finalVideoUrl });
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeTitle}_clips.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      updateQueueItem(item.id, {
-        processStatus: 'error',
-        processError: err instanceof Error ? err.message : 'Video processing failed',
-      });
+      setDownloadError(err instanceof Error ? err.message : 'Failed to download video clips');
+    } finally {
+      setDownloadingClips(false);
     }
   };
 
-  const handlePost = async (publishNow: boolean) => {
-    if (!item.finalVideoUrl) return;
-    updateQueueItem(item.id, { postStatus: 'generating', postError: undefined });
-    try {
-      const youtubeVideoId = await uploadShort({
-        accessToken: settings.youtubeAccessToken,
-        videoUrl: item.finalVideoUrl,
-        title: item.title,
-        hashtags: item.hashtags,
-        description: item.hook,
-        scheduledTime: publishNow ? undefined : scheduledTime || undefined,
-      });
-      updateQueueItem(item.id, {
-        postStatus: 'ready',
-        youtubeVideoId,
-        postedTime: new Date().toISOString(),
-        scheduledTime: publishNow ? undefined : scheduledTime || undefined,
-      });
-    } catch (err) {
-      updateQueueItem(item.id, {
-        postStatus: 'error',
-        postError: err instanceof Error ? err.message : 'YouTube upload failed',
-      });
-    }
-  };
-
-  const readyToPost = item.processStatus === 'ready' && !!item.finalVideoUrl;
-
-  const canProcess =
-    item.videoStatus === 'ready' &&
-    !!item.clips?.length &&
-    item.voiceoverStatus === 'ready' &&
-    !!item.audioUrl &&
-    !!item.audioDuration &&
-    item.captionsStatus !== 'idle' &&
-    item.captionsStatus !== 'generating' &&
-    item.processStatus !== 'processing';
+  const downloadsReady = item.voiceoverStatus === 'ready' && item.videoStatus === 'ready';
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-5">
@@ -266,39 +181,36 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         </button>
       </div>
 
-      {readyToPost && (
+      {downloadsReady && (
         <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-green-400">
-            ✓ Ready to Post
+            ✓ Ready to Download
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <input
-              type="datetime-local"
-              value={scheduledTime}
-              onChange={(e) => setScheduledTime(e.target.value)}
-              className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-gray-200"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={() => handlePost(true)}
-                disabled={item.postStatus === 'generating'}
-                className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-50"
-              >
-                Post Now
-              </button>
-              <button
-                onClick={() => handlePost(false)}
-                disabled={item.postStatus === 'generating' || !scheduledTime}
-                className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10 disabled:opacity-50"
-              >
-                Schedule
-              </button>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={item.audioUrl}
+              download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}.mp3`}
+              className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-500"
+            >
+              Download Voiceover
+            </a>
+            <button
+              onClick={handleDownloadClips}
+              disabled={downloadingClips}
+              className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10 disabled:opacity-50"
+            >
+              {downloadingClips
+                ? 'Zipping clips…'
+                : item.clips && item.clips.length > 1
+                  ? 'Download Video Clips (.zip)'
+                  : 'Download Video Clip'}
+            </button>
           </div>
+          {downloadError && <p className="mt-2 text-xs text-red-400">{downloadError}</p>}
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {/* Voiceover */}
         <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="flex items-center justify-between">
@@ -311,13 +223,6 @@ export default function QueueCard({ item }: { item: QueueItem }) {
               {item.audioDuration && (
                 <p className="text-xs text-gray-500">{item.audioDuration.toFixed(1)}s</p>
               )}
-              <a
-                href={item.audioUrl}
-                download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}.mp3`}
-                className="text-xs text-violet-400 hover:underline"
-              >
-                Download MP3
-              </a>
             </div>
           )}
           {item.voiceoverStatus === 'error' && (
@@ -334,61 +239,6 @@ export default function QueueCard({ item }: { item: QueueItem }) {
                 ? 'Regenerate Voiceover'
                 : 'Generate Voiceover'}
           </button>
-        </div>
-
-        {/* Captions */}
-        <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white">Captions</span>
-            <StatusBadge status={item.captionsStatus} />
-          </div>
-          {item.voiceoverStatus !== 'ready' && (
-            <p className="text-xs text-gray-500">
-              Generate the voiceover first to transcribe captions.
-            </p>
-          )}
-          {item.captionsStatus === 'generating' && (
-            <p className="text-xs text-gray-500">Transcribing voiceover with Whisper…</p>
-          )}
-          {item.captionsStatus === 'ready' && (
-            <>
-              {item.captions && item.captions.length > 0 ? (
-                <>
-                  <p className="text-xs text-gray-500">{item.captions.length} caption chunks</p>
-                  {item.captionsSrt && (
-                    <a
-                      href={`data:text/srt;charset=utf-8,${encodeURIComponent(item.captionsSrt)}`}
-                      download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}.srt`}
-                      className="text-xs text-violet-400 hover:underline"
-                    >
-                      Download SRT
-                    </a>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-gray-500">Skipped — no captions will be burned in.</p>
-              )}
-            </>
-          )}
-          {item.captionsStatus === 'error' && (
-            <p className="text-xs text-red-400">{item.captionsError}</p>
-          )}
-          {item.captionsStatus === 'error' && (
-            <div className="mt-auto flex flex-col gap-2">
-              <button
-                onClick={handleGenerateCaptions}
-                className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500"
-              >
-                Retry
-              </button>
-              <button
-                onClick={handleSkipCaptions}
-                className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
-              >
-                Continue Without Captions
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Video Clips */}
@@ -456,109 +306,6 @@ export default function QueueCard({ item }: { item: QueueItem }) {
             )}
           </div>
         </div>
-
-        {/* Post to YouTube */}
-        <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white">YouTube</span>
-            <StatusBadge status={item.postStatus} />
-          </div>
-          {item.postStatus === 'ready' && item.youtubeVideoId && (
-            <p className="text-xs text-gray-400">
-              Video ID: <span className="text-gray-200">{item.youtubeVideoId}</span>
-            </p>
-          )}
-          {item.postStatus === 'error' && <p className="text-xs text-red-400">{item.postError}</p>}
-          {!readyToPost && (
-            <p className="text-xs text-gray-500">
-              Generate video and voiceover, then wait for processing to finish to enable posting.
-            </p>
-          )}
-          {item.postStatus === 'error' && (
-            <button
-              onClick={() => handlePost(true)}
-              className="mt-auto rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500"
-            >
-              Retry
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Final Processed Video */}
-      <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-white">Final Video (with voiceover)</span>
-          <span
-            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-              item.processStatus === 'error'
-                ? 'bg-red-500/10 text-red-400 border-red-500/30'
-                : item.processStatus === 'processing'
-                  ? 'bg-violet-600/10 text-violet-400 border-violet-600/30 animate-pulse'
-                  : item.processStatus === 'ready'
-                    ? 'bg-green-500/10 text-green-400 border-green-500/30'
-                    : 'bg-white/5 text-gray-400 border-white/10'
-            }`}
-          >
-            {PROCESS_STATUS_LABELS[item.processStatus]}
-          </span>
-        </div>
-
-        {item.processStatus === 'processing' && (
-          <p className="text-xs text-gray-500">
-            Trimming and concatenating clips and merging voiceover with ffmpeg…
-          </p>
-        )}
-
-        {item.processStatus === 'error' && (
-          <>
-            <p className="text-xs text-red-400">{item.processError}</p>
-            <button
-              onClick={handleProcess}
-              className="self-start rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500"
-            >
-              Retry
-            </button>
-          </>
-        )}
-
-        {item.processStatus === 'ready' && item.finalVideoUrl && (
-          <div className="flex flex-col gap-2">
-            <video src={item.finalVideoUrl} controls className="w-full rounded-md" />
-            <div className="flex gap-2">
-              <a
-                href={item.finalVideoUrl}
-                download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}_final.mp4`}
-                className="self-start rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
-              >
-                Download Final Video
-              </a>
-              <button
-                onClick={handleProcess}
-                className="self-start rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10"
-              >
-                Regenerate Final Video
-              </button>
-            </div>
-          </div>
-        )}
-
-        {item.processStatus === 'not_processed' && (
-          <div className="flex flex-col gap-2">
-            <p className="text-xs text-gray-500">
-              {canProcess
-                ? 'Clips, voiceover, and captions are ready — generate the final video.'
-                : 'Generate the video clips and voiceover first, then generate the final video.'}
-            </p>
-            <button
-              onClick={handleProcess}
-              disabled={!canProcess}
-              className="self-start rounded-md bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-            >
-              Generate Final Video
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

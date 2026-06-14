@@ -10,8 +10,6 @@ export interface Script {
 
 export type TaskStatus = 'idle' | 'pending' | 'generating' | 'ready' | 'error';
 
-export type ProcessStatus = 'not_processed' | 'processing' | 'ready' | 'error';
-
 export interface StockClip {
   id: number; // Pexels video ID, used to avoid reusing the same clip
   query: string;
@@ -19,13 +17,6 @@ export interface StockClip {
   thumbnailUrl: string;
   duration: number; // trimmed segment length in seconds
   sourceDuration: number; // original clip length in seconds
-}
-
-/** A 2-4 word caption chunk with its on-screen timing window. */
-export interface CaptionChunk {
-  text: string;
-  start: number; // seconds
-  end: number; // seconds
 }
 
 export interface QueueItem extends Script {
@@ -42,15 +33,6 @@ export interface QueueItem extends Script {
   audioUrl?: string;
   audioDuration?: number; // exact voiceover duration in seconds
   voiceoverError?: string;
-
-  captionsStatus: TaskStatus;
-  captions?: CaptionChunk[];
-  captionsSrt?: string;
-  captionsError?: string;
-
-  processStatus: ProcessStatus;
-  finalVideoUrl?: string;
-  processError?: string;
 
   postStatus: TaskStatus;
   postError?: string;

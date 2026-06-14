@@ -1,8 +1,7 @@
 /**
- * IndexedDB-backed storage for large generated assets (voiceover audio and
- * final processed video). These are kept out of localStorage, which has a
- * small size limit (typically ~5MB) that base64-encoded media would quickly
- * exceed.
+ * IndexedDB-backed storage for large generated assets (voiceover audio).
+ * This is kept out of localStorage, which has a small size limit (typically
+ * ~5MB) that base64-encoded media would quickly exceed.
  */
 
 const DB_NAME = 'shorts-automator';
@@ -82,7 +81,6 @@ export async function clearAllAssets(): Promise<void> {
 
 export const assetKeys = {
   audio: (queueItemId: string) => `audio:${queueItemId}`,
-  finalVideo: (queueItemId: string) => `final-video:${queueItemId}`,
 };
 
 /** Fetches a `data:`/`blob:` URL and returns its contents as a `Blob`. */
