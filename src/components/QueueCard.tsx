@@ -14,7 +14,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
   const { userId, settings, updateQueueItem, removeFromQueue, usedClipIds, addUsedClipIds } =
     useApp();
   const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
-  const [downloadingClips, setDownloadingClips] = useState(false);
+  const [downloadingClipIndex, setDownloadingClipIndex] = useState<number | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [videoUploadError, setVideoUploadError] = useState<string | null>(null);
@@ -136,50 +136,27 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     }
   };
 
-  const handleDownloadClips = async () => {
-    if (!item.clips?.length) return;
+  const handleDownloadClip = async (index: number) => {
+    if (!item.clips?.[index]) return;
     setDownloadError(null);
-
     const safeTitle = item.title.replace(/[^a-z0-9]+/gi, '_');
+    const clip = item.clips[index];
 
-    if (item.clips.length === 1) {
-      const a = document.createElement('a');
-      a.href = item.clips[0].videoUrl;
-      a.download = `${safeTitle}_clip1.mp4`;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      return;
-    }
-
-    setDownloadingClips(true);
+    setDownloadingClipIndex(index);
     try {
-      const JSZip = (await import('jszip')).default;
-      const zip = new JSZip();
-      for (let i = 0; i < item.clips.length; i++) {
-        const clip = item.clips[i];
-        const response = await fetch(clip.videoUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to download clip ${i + 1} (HTTP ${response.status})`);
-        }
-        const blob = await response.blob();
-        zip.file(`clip${i + 1}.mp4`, blob);
-      }
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(zipBlob);
+      const blob = await urlToBlob(clip.videoUrl);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${safeTitle}_clips.zip`;
+      a.download = `${safeTitle}_clip${index + 1}.mp4`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : 'Failed to download video clips');
+      setDownloadError(err instanceof Error ? err.message : 'Failed to download video clip');
     } finally {
-      setDownloadingClips(false);
+      setDownloadingClipIndex(null);
     }
   };
 
@@ -263,18 +240,10 @@ export default function QueueCard({ item }: { item: QueueItem }) {
             >
               Download Voiceover
             </button>
-            <button
-              onClick={handleDownloadClips}
-              disabled={downloadingClips}
-              className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:bg-white/10 disabled:opacity-50"
-            >
-              {downloadingClips
-                ? 'Zipping clips…'
-                : item.clips && item.clips.length > 1
-                  ? 'Download Video Clips (.zip)'
-                  : 'Download Video Clip'}
-            </button>
           </div>
+          <p className="mt-2 text-xs text-gray-400">
+            Download each video clip individually below.
+          </p>
           {downloadError && <p className="mt-2 text-xs text-red-400">{downloadError}</p>}
         </div>
       )}
@@ -339,13 +308,22 @@ export default function QueueCard({ item }: { item: QueueItem }) {
                     {clip.query}
                   </p>
                   <p className="text-xs text-gray-500">{clip.duration.toFixed(1)}s</p>
-                  <button
-                    onClick={() => handleReplaceClip(idx)}
-                    disabled={replacingIndex !== null}
-                    className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-gray-200 hover:bg-white/10 disabled:opacity-50"
-                  >
-                    {replacingIndex === idx ? 'Replacing…' : 'Replace'}
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => handleReplaceClip(idx)}
+                      disabled={replacingIndex !== null}
+                      className="flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-gray-200 hover:bg-white/10 disabled:opacity-50"
+                    >
+                      {replacingIndex === idx ? 'Replacing…' : 'Replace'}
+                    </button>
+                    <button
+                      onClick={() => handleDownloadClip(idx)}
+                      disabled={downloadingClipIndex !== null}
+                      className="flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold text-gray-200 hover:bg-white/10 disabled:opacity-50"
+                    >
+                      {downloadingClipIndex === idx ? 'Downloading…' : 'Download'}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
