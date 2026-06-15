@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { QueueItem, ScheduleSlot, SettingsState } from '../types';
 import { AppContext } from './appContextDefinition';
-import { assetKeys, clearAllAssets, deleteAsset, loadAsset } from '../utils/storage';
+import { assetPaths, deleteUserAsset, supabase, uploadUserAsset } from '../api/supabase';
+import { legacyAssetKeys, loadAsset } from '../utils/storage';
 
 const SETTINGS_KEY = 'shorts-automator:settings';
 const QUEUE_KEY = 'shorts-automator:queue';
@@ -20,6 +21,7 @@ const defaultSettings: SettingsState = {
   voiceStyleSpace: 'dramatic',
   voiceStyleAncientCiv: 'authoritative',
   voiceStyleFeelGood: 'warm',
+  backgroundAudioUrl: '',
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -31,137 +33,302 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   }
 }
 
-export function AppProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<SettingsState>(() =>
-    loadFromStorage(SETTINGS_KEY, defaultSettings)
-  );
-  const [queue, setQueue] = useState<QueueItem[]>(() => loadFromStorage(QUEUE_KEY, []));
-  const [schedule, setSchedule] = useState<ScheduleSlot[]>(() =>
-    loadFromStorage(SCHEDULE_KEY, [])
-  );
-  const [usedClipIds, setUsedClipIds] = useState<number[]>(() =>
-    loadFromStorage(USED_CLIP_IDS_KEY, [])
+/**
+ * On first load for this account (no `settings` row yet), pulls over any
+ * data from this browser's old localStorage/IndexedDB-based storage —
+ * including re-uploading previously generated voiceovers and final videos to
+ * Supabase Storage — so nothing has to be re-entered or regenerated.
+ */
+async function migrateLocalData(userId: string) {
+  const localSettings = loadFromStorage(SETTINGS_KEY, defaultSettings);
+  const localQueue = loadFromStorage<QueueItem[]>(QUEUE_KEY, []);
+  const localSchedule = loadFromStorage<ScheduleSlot[]>(SCHEDULE_KEY, []);
+  const localUsedClipIds = loadFromStorage<number[]>(USED_CLIP_IDS_KEY, []);
+
+  const migratedQueue = await Promise.all(
+    localQueue.map(async (item) => {
+      const migrated = { ...item };
+
+      if (migrated.voiceoverStatus === 'ready') {
+        const blob = await loadAsset(legacyAssetKeys.audio(item.id));
+        if (blob) {
+          try {
+            migrated.audioUrl = await uploadUserAsset(userId, assetPaths.audio(item.id), blob);
+          } catch (err) {
+            console.error('Failed to migrate voiceover audio', err);
+            migrated.voiceoverStatus = 'idle';
+            migrated.audioUrl = undefined;
+          }
+        } else {
+          migrated.voiceoverStatus = 'idle';
+          migrated.audioUrl = undefined;
+        }
+      }
+
+      if (migrated.finalVideoStatus === 'ready') {
+        const blob = await loadAsset(legacyAssetKeys.video(item.id));
+        if (blob) {
+          try {
+            migrated.finalVideoUrl = await uploadUserAsset(userId, assetPaths.video(item.id), blob);
+          } catch (err) {
+            console.error('Failed to migrate final video', err);
+            migrated.finalVideoStatus = 'idle';
+            migrated.finalVideoUrl = undefined;
+          }
+        } else {
+          migrated.finalVideoStatus = 'idle';
+          migrated.finalVideoUrl = undefined;
+        }
+      }
+
+      return migrated;
+    })
   );
 
-  useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settings]);
+  const { error: settingsError } = await supabase
+    .from('settings')
+    .insert({ user_id: userId, data: localSettings });
+  if (settingsError) console.error('Failed to migrate settings', settingsError);
 
-  useEffect(() => {
-    // The voiceover audio and final video are persisted separately in
-    // IndexedDB, so strip them out of the localStorage copy of the queue to
-    // avoid exceeding its small storage quota.
-    const persistedQueue = queue.map((item) => ({
-      ...item,
-      audioUrl: undefined,
-      finalVideoUrl: undefined,
-    }));
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(persistedQueue));
-  }, [queue]);
+  if (migratedQueue.length > 0) {
+    const { error } = await supabase.from('queue_items').insert(
+      migratedQueue.map((item, index) => ({
+        id: item.id,
+        user_id: userId,
+        position: index,
+        data: item,
+      }))
+    );
+    if (error) console.error('Failed to migrate queue', error);
+  }
 
-  // On mount, restore any generated voiceover audio / uploaded final video
-  // from IndexedDB and re-attach them to the matching queue items as fresh
-  // object URLs.
+  if (localSchedule.length > 0) {
+    const { error } = await supabase
+      .from('schedule_slots')
+      .insert(localSchedule.map((slot) => ({ id: slot.id, user_id: userId, data: slot })));
+    if (error) console.error('Failed to migrate schedule', error);
+  }
+
+  if (localUsedClipIds.length > 0) {
+    const { error } = await supabase
+      .from('used_clip_ids')
+      .insert({ user_id: userId, ids: localUsedClipIds });
+    if (error) console.error('Failed to migrate used clip ids', error);
+  }
+
+  return {
+    settings: { ...defaultSettings, ...localSettings },
+    queue: migratedQueue,
+    schedule: localSchedule,
+    usedClipIds: localUsedClipIds,
+  };
+}
+
+export function AppProvider({ children, userId }: { children: ReactNode; userId: string }) {
+  const [settings, setSettingsState] = useState<SettingsState>(defaultSettings);
+  const [queue, setQueueState] = useState<QueueItem[]>([]);
+  const [schedule, setScheduleState] = useState<ScheduleSlot[]>([]);
+  const [usedClipIds, setUsedClipIdsState] = useState<number[]>([]);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      const restored = await Promise.all(
-        queue.map(async (item) => {
-          const updates: Partial<QueueItem> = {};
-
-          if (item.voiceoverStatus === 'ready' && !item.audioUrl) {
-            const audioBlob = await loadAsset(assetKeys.audio(item.id));
-            if (audioBlob) {
-              updates.audioUrl = URL.createObjectURL(audioBlob);
-            } else {
-              updates.voiceoverStatus = 'idle';
-            }
-          }
-
-          if (item.finalVideoStatus === 'ready' && !item.finalVideoUrl) {
-            const videoBlob = await loadAsset(assetKeys.video(item.id));
-            if (videoBlob) {
-              updates.finalVideoUrl = URL.createObjectURL(videoBlob);
-            } else {
-              updates.finalVideoStatus = 'idle';
-            }
-          }
-
-          return Object.keys(updates).length > 0 ? { id: item.id, updates } : null;
-        })
-      );
+      const { data: existingSettings, error } = await supabase
+        .from('settings')
+        .select('data')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) console.error('Failed to load settings', error);
 
       if (cancelled) return;
-      const changes = restored.filter((r): r is { id: string; updates: Partial<QueueItem> } => r !== null);
-      if (changes.length === 0) return;
 
-      setQueue((prev) =>
-        prev.map((item) => {
-          const change = changes.find((c) => c.id === item.id);
-          return change ? { ...item, ...change.updates } : item;
-        })
-      );
+      if (existingSettings) {
+        const [queueRes, scheduleRes, usedClipsRes] = await Promise.all([
+          supabase
+            .from('queue_items')
+            .select('data')
+            .eq('user_id', userId)
+            .order('position'),
+          supabase.from('schedule_slots').select('data').eq('user_id', userId),
+          supabase.from('used_clip_ids').select('ids').eq('user_id', userId).maybeSingle(),
+        ]);
+        if (cancelled) return;
+
+        setSettingsState({ ...defaultSettings, ...(existingSettings.data as Partial<SettingsState>) });
+        setQueueState((queueRes.data ?? []).map((row) => row.data as QueueItem));
+        setScheduleState((scheduleRes.data ?? []).map((row) => row.data as ScheduleSlot));
+        setUsedClipIdsState((usedClipsRes.data?.ids as number[] | undefined) ?? []);
+        setLoading(false);
+        return;
+      }
+
+      const migrated = await migrateLocalData(userId);
+      if (cancelled) return;
+      setSettingsState(migrated.settings);
+      setQueueState(migrated.queue);
+      setScheduleState(migrated.schedule);
+      setUsedClipIdsState(migrated.usedClipIds);
+      setLoading(false);
     })();
 
     return () => {
       cancelled = true;
     };
-    // Only run once on mount — restoration applies to whatever was loaded
-    // from localStorage at startup.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userId]);
 
-  useEffect(() => {
-    localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule));
-  }, [schedule]);
+  const setSettings: React.Dispatch<React.SetStateAction<SettingsState>> = (value) => {
+    setSettingsState((prev) => {
+      const next = typeof value === 'function' ? (value as (p: SettingsState) => SettingsState)(prev) : value;
+      supabase
+        .from('settings')
+        .upsert({ user_id: userId, data: next })
+        .then(({ error }) => {
+          if (error) console.error('Failed to save settings', error);
+        });
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(USED_CLIP_IDS_KEY, JSON.stringify(usedClipIds));
-  }, [usedClipIds]);
+  const setSchedule: React.Dispatch<React.SetStateAction<ScheduleSlot[]>> = (value) => {
+    setScheduleState((prev) => {
+      const next = typeof value === 'function' ? (value as (p: ScheduleSlot[]) => ScheduleSlot[])(prev) : value;
+
+      const nextIds = new Set(next.map((s) => s.id));
+      const removed = prev.filter((s) => !nextIds.has(s.id));
+
+      if (removed.length > 0) {
+        supabase
+          .from('schedule_slots')
+          .delete()
+          .in('id', removed.map((s) => s.id))
+          .then(({ error }) => {
+            if (error) console.error('Failed to delete schedule slots', error);
+          });
+      }
+      if (next.length > 0) {
+        supabase
+          .from('schedule_slots')
+          .upsert(next.map((s) => ({ id: s.id, user_id: userId, data: s })))
+          .then(({ error }) => {
+            if (error) console.error('Failed to save schedule slots', error);
+          });
+      }
+
+      return next;
+    });
+  };
 
   const addToQueue = (item: QueueItem) => {
-    setQueue((prev) => [...prev, item]);
+    setQueueState((prev) => {
+      const position = prev.length;
+      supabase
+        .from('queue_items')
+        .insert({ id: item.id, user_id: userId, position, data: item })
+        .then(({ error }) => {
+          if (error) console.error('Failed to add queue item', error);
+        });
+      return [...prev, item];
+    });
   };
 
   const updateQueueItem = (id: string, updates: Partial<QueueItem>) => {
-    setQueue((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
+    setQueueState((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const next = { ...item, ...updates };
+        supabase
+          .from('queue_items')
+          .update({ data: next })
+          .eq('id', id)
+          .eq('user_id', userId)
+          .then(({ error }) => {
+            if (error) console.error('Failed to update queue item', error);
+          });
+        return next;
+      })
     );
   };
 
   const removeFromQueue = (id: string) => {
-    setQueue((prev) => prev.filter((item) => item.id !== id));
+    setQueueState((prev) => prev.filter((item) => item.id !== id));
     setSchedule((prev) => prev.filter((slot) => slot.queueItemId !== id));
-    deleteAsset(assetKeys.audio(id));
-    deleteAsset(assetKeys.video(id));
+    supabase
+      .from('queue_items')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId)
+      .then(({ error }) => {
+        if (error) console.error('Failed to delete queue item', error);
+      });
+    deleteUserAsset(userId, assetPaths.audio(id));
+    deleteUserAsset(userId, assetPaths.video(id));
   };
 
   const addUsedClipIds = (ids: number[]) => {
     if (ids.length === 0) return;
-    setUsedClipIds((prev) => [...new Set([...prev, ...ids])]);
+    setUsedClipIdsState((prev) => {
+      const next = [...new Set([...prev, ...ids])];
+      supabase
+        .from('used_clip_ids')
+        .upsert({ user_id: userId, ids: next })
+        .then(({ error }) => {
+          if (error) console.error('Failed to save used clip ids', error);
+        });
+      return next;
+    });
   };
 
   const clearSavedData = async () => {
-    await clearAllAssets();
-    setQueue((prev) =>
-      prev.map((item) => ({
-        ...item,
-        audioUrl: undefined,
-        voiceoverStatus: item.voiceoverStatus === 'ready' ? 'idle' : item.voiceoverStatus,
-        finalVideoUrl: undefined,
-        finalVideoStatus: item.finalVideoStatus === 'ready' ? 'idle' : item.finalVideoStatus,
-      }))
+    await Promise.all(
+      queue.flatMap((item) => [
+        deleteUserAsset(userId, assetPaths.audio(item.id)),
+        deleteUserAsset(userId, assetPaths.video(item.id)),
+      ])
+    );
+    setQueueState((prev) =>
+      prev.map((item) => {
+        const next: QueueItem = {
+          ...item,
+          audioUrl: undefined,
+          voiceoverStatus: item.voiceoverStatus === 'ready' ? 'idle' : item.voiceoverStatus,
+          finalVideoUrl: undefined,
+          finalVideoStatus: item.finalVideoStatus === 'ready' ? 'idle' : item.finalVideoStatus,
+        };
+        supabase
+          .from('queue_items')
+          .update({ data: next })
+          .eq('id', item.id)
+          .eq('user_id', userId)
+          .then(({ error }) => {
+            if (error) console.error('Failed to update queue item', error);
+          });
+        return next;
+      })
     );
   };
+
+  const changePassword = async (newPassword: string) => {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0f0f0f]">
+        <p className="text-sm text-gray-500">Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <AppContext.Provider
       value={{
+        userId,
         settings,
         setSettings,
         queue,
-        setQueue,
         addToQueue,
         updateQueueItem,
         removeFromQueue,
@@ -170,6 +337,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         usedClipIds,
         addUsedClipIds,
         clearSavedData,
+        changePassword,
+        loading,
       }}
     >
       {children}

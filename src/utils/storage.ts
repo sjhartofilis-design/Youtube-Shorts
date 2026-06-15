@@ -1,7 +1,7 @@
 /**
- * IndexedDB-backed storage for large generated assets (voiceover audio).
- * This is kept out of localStorage, which has a small size limit (typically
- * ~5MB) that base64-encoded media would quickly exceed.
+ * Legacy IndexedDB reader, used only to migrate previously-generated
+ * voiceover audio and uploaded final videos into Supabase Storage the first
+ * time this app loads with an account.
  */
 
 const DB_NAME = 'shorts-automator';
@@ -19,21 +19,6 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-/** Saves a blob under the given key, overwriting any existing entry. */
-export async function saveAsset(key: string, blob: Blob): Promise<void> {
-  const db = await openDb();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      tx.objectStore(STORE_NAME).put(blob, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } finally {
-    db.close();
-  }
-}
-
 /** Loads a previously saved blob, or `undefined` if none was found. */
 export async function loadAsset(key: string): Promise<Blob | undefined> {
   const db = await openDb();
@@ -49,37 +34,7 @@ export async function loadAsset(key: string): Promise<Blob | undefined> {
   }
 }
 
-/** Deletes a saved asset, if it exists. */
-export async function deleteAsset(key: string): Promise<void> {
-  const db = await openDb();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      tx.objectStore(STORE_NAME).delete(key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } finally {
-    db.close();
-  }
-}
-
-/** Deletes every saved asset. Used by the "Clear Saved Data" setting. */
-export async function clearAllAssets(): Promise<void> {
-  const db = await openDb();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      tx.objectStore(STORE_NAME).clear();
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } finally {
-    db.close();
-  }
-}
-
-export const assetKeys = {
+export const legacyAssetKeys = {
   audio: (queueItemId: string) => `audio:${queueItemId}`,
   video: (queueItemId: string) => `video:${queueItemId}`,
 };

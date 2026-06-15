@@ -6,11 +6,13 @@ import { selectClipsForVoiceover, selectReplacementClip } from '../api/pexels';
 import { generateVoiceover } from '../api/elevenlabs';
 import { speedUpAudio } from '../api/ffmpeg';
 import { getAudioDuration } from '../utils/narration';
-import { assetKeys, saveAsset, urlToBlob } from '../utils/storage';
+import { assetPaths, uploadUserAsset } from '../api/supabase';
+import { urlToBlob } from '../utils/storage';
 import StatusBadge from './StatusBadge';
 
 export default function QueueCard({ item }: { item: QueueItem }) {
-  const { settings, updateQueueItem, removeFromQueue, usedClipIds, addUsedClipIds } = useApp();
+  const { userId, settings, updateQueueItem, removeFromQueue, usedClipIds, addUsedClipIds } =
+    useApp();
   const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
   const [downloadingClips, setDownloadingClips] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -93,13 +95,13 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         voiceId,
         item.narration
       );
-      const audioUrl = await speedUpAudio(rawAudioUrl, 1.5);
-      const audioDuration = await getAudioDuration(audioUrl);
-      try {
-        await saveAsset(assetKeys.audio(item.id), await urlToBlob(audioUrl));
-      } catch (err) {
-        console.warn('Failed to save voiceover to IndexedDB for persistence', err);
-      }
+      const sped = await speedUpAudio(rawAudioUrl, 1.5);
+      const audioDuration = await getAudioDuration(sped);
+      const audioUrl = await uploadUserAsset(
+        userId,
+        assetPaths.audio(item.id),
+        await urlToBlob(sped)
+      );
       updateQueueItem(item.id, {
         voiceoverStatus: 'ready',
         audioUrl,
@@ -112,6 +114,25 @@ export default function QueueCard({ item }: { item: QueueItem }) {
         voiceoverStatus: 'error',
         voiceoverError: err instanceof Error ? err.message : 'Voiceover generation failed',
       });
+    }
+  };
+
+  const handleDownloadVoiceover = async () => {
+    if (!item.audioUrl) return;
+    setDownloadError(null);
+    const safeTitle = item.title.replace(/[^a-z0-9]+/gi, '_');
+    try {
+      const blob = await urlToBlob(item.audioUrl);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeTitle}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Failed to download voiceover');
     }
   };
 
@@ -170,8 +191,7 @@ export default function QueueCard({ item }: { item: QueueItem }) {
     setVideoUploadError(null);
     setUploadingVideo(true);
     try {
-      await saveAsset(assetKeys.video(item.id), file);
-      const finalVideoUrl = URL.createObjectURL(file);
+      const finalVideoUrl = await uploadUserAsset(userId, assetPaths.video(item.id), file);
       updateQueueItem(item.id, { finalVideoUrl, finalVideoStatus: 'ready' });
     } catch (err) {
       setVideoUploadError(err instanceof Error ? err.message : 'Failed to save final video');
@@ -237,13 +257,12 @@ export default function QueueCard({ item }: { item: QueueItem }) {
             ✓ Ready to Download
           </div>
           <div className="flex flex-wrap gap-2">
-            <a
-              href={item.audioUrl}
-              download={`${item.title.replace(/[^a-z0-9]+/gi, '_')}.mp3`}
+            <button
+              onClick={handleDownloadVoiceover}
               className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-500"
             >
               Download Voiceover
-            </a>
+            </button>
             <button
               onClick={handleDownloadClips}
               disabled={downloadingClips}

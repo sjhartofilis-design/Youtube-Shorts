@@ -2,11 +2,12 @@ import { createContext } from 'react';
 import type { QueueItem, ScheduleSlot, SettingsState } from '../types';
 
 export interface AppContextValue {
+  userId: string;
+
   settings: SettingsState;
   setSettings: React.Dispatch<React.SetStateAction<SettingsState>>;
 
   queue: QueueItem[];
-  setQueue: React.Dispatch<React.SetStateAction<QueueItem[]>>;
   addToQueue: (item: QueueItem) => void;
   updateQueueItem: (id: string, updates: Partial<QueueItem>) => void;
   removeFromQueue: (id: string) => void;
@@ -18,6 +19,9 @@ export interface AppContextValue {
   addUsedClipIds: (ids: number[]) => void;
 
   clearSavedData: () => Promise<void>;
+  changePassword: (newPassword: string) => Promise<void>;
+
+  loading: boolean;
 }
 
 export const AppContext = createContext<AppContextValue | undefined>(undefined);

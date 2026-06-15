@@ -79,6 +79,7 @@ export interface SettingsState {
   voiceStyleSpace: VoiceStyle;
   voiceStyleAncientCiv: VoiceStyle;
   voiceStyleFeelGood: VoiceStyle;
+  backgroundAudioUrl: string;
 }
 
 export const VOICE_ID_MAP: Record<VoiceStyle, string> = {

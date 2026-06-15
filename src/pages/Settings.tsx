@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, type ChangeEvent } from 'react';
 import { useApp } from '../hooks/useApp';
 import { startGoogleOAuth } from '../api/youtube';
+import { assetPaths, uploadUserAsset } from '../api/supabase';
 import { VOICE_STYLE_OPTIONS, type VoiceStyle } from '../types';
 
 function maskKey(key: string): string {
@@ -10,13 +11,20 @@ function maskKey(key: string): string {
 }
 
 export default function Settings() {
-  const { settings, setSettings, clearSavedData } = useApp();
+  const { userId, settings, setSettings, clearSavedData, changePassword } = useApp();
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [dataCleared, setDataCleared] = useState(false);
   const [clearingData, setClearingData] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordChanged, setPasswordChanged] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
 
   const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -55,6 +63,47 @@ export default function Settings() {
       setOauthError(err instanceof Error ? err.message : 'Failed to connect to YouTube');
     } finally {
       setConnecting(false);
+    }
+  };
+
+  const handleBackgroundAudioUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setAudioUploadError(null);
+    setUploadingAudio(true);
+    try {
+      const url = await uploadUserAsset(userId, assetPaths.backgroundAudio(), file);
+      update('backgroundAudioUrl', url);
+    } catch (err) {
+      setAudioUploadError(err instanceof Error ? err.message : 'Failed to upload audio track');
+    } finally {
+      setUploadingAudio(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    setPasswordError(null);
+    setPasswordChanged(false);
+    if (newPassword.length < 8) {
+      setPasswordError('Password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await changePassword(newPassword);
+      setPasswordChanged(true);
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : 'Failed to change password');
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -124,6 +173,34 @@ export default function Settings() {
           </div>
         </section>
 
+        {/* Background Music */}
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h2 className="mb-4 text-base font-semibold text-white">Background Music</h2>
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-gray-500">
+              Optional background audio track to use when editing your videos.
+            </p>
+            {form.backgroundAudioUrl && (
+              <audio src={form.backgroundAudioUrl} controls className="w-full" />
+            )}
+            {audioUploadError && <p className="text-xs text-red-400">{audioUploadError}</p>}
+            <label className="self-start cursor-pointer rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-violet-500">
+              {uploadingAudio
+                ? 'Uploading…'
+                : form.backgroundAudioUrl
+                  ? 'Replace Track'
+                  : 'Upload Track'}
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={handleBackgroundAudioUpload}
+                disabled={uploadingAudio}
+                className="hidden"
+              />
+            </label>
+          </div>
+        </section>
+
         {/* Channels */}
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
           <h2 className="mb-4 text-base font-semibold text-white">Channels</h2>
@@ -185,9 +262,9 @@ export default function Settings() {
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
           <h2 className="mb-4 text-base font-semibold text-white">Storage</h2>
           <p className="mb-4 text-sm text-gray-400">
-            Generated voiceovers and uploaded final videos are saved in this browser so they
-            survive page refreshes. If storage gets too large or you want to start fresh, clear it
-            here — the queue items themselves won't be deleted.
+            Generated voiceovers and uploaded final videos are saved to your account so they're
+            available on every device. If storage gets too large or you want to start fresh,
+            clear it here — the queue items themselves won't be deleted.
           </p>
           <button
             onClick={handleClearSavedData}
@@ -199,6 +276,41 @@ export default function Settings() {
           {dataCleared && (
             <p className="mt-2 text-sm text-green-400">Saved voiceovers and videos cleared ✓</p>
           )}
+        </section>
+
+        {/* Account */}
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h2 className="mb-4 text-base font-semibold text-white">Account</h2>
+          <div className="flex flex-col gap-4">
+            <p className="text-xs text-gray-500">
+              Change the password used to access this dashboard from any device.
+            </p>
+            <Field
+              label="New Password"
+              value={newPassword}
+              onChange={setNewPassword}
+              placeholder="At least 8 characters"
+              secret
+            />
+            <Field
+              label="Confirm New Password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              placeholder="Re-enter new password"
+              secret
+            />
+            {passwordError && <p className="text-xs text-red-400">{passwordError}</p>}
+            {passwordChanged && (
+              <p className="text-xs text-green-400">Password changed ✓</p>
+            )}
+            <button
+              onClick={handleChangePassword}
+              disabled={changingPassword}
+              className="self-start rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:opacity-50"
+            >
+              {changingPassword ? 'Changing…' : 'Change Password'}
+            </button>
+          </div>
         </section>
 
         <div className="flex items-center gap-4">
