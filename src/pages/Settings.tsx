@@ -61,19 +61,23 @@ export default function Settings() {
     setError(null);
     setConnecting(true);
     try {
-      const token = await startGoogleOAuth(form.youtubeClientId);
-      const info = await getChannelInfo(token);
+      const tokens = await startGoogleOAuth(form.youtubeClientId, form.youtubeClientSecret);
+      const info = await getChannelInfo(tokens.accessToken);
       if (channel === 'space') {
         setForm((prev) => ({
           ...prev,
-          youtubeAccessTokenSpace: token,
+          youtubeAccessTokenSpace: tokens.accessToken,
+          youtubeRefreshTokenSpace: tokens.refreshToken,
+          youtubeTokenExpiresAtSpace: tokens.expiresAt,
           youtubeChannelNameSpace: info.name,
           youtubeChannelPicSpace: info.pictureUrl,
         }));
       } else {
         setForm((prev) => ({
           ...prev,
-          youtubeAccessTokenAncientCiv: token,
+          youtubeAccessTokenAncientCiv: tokens.accessToken,
+          youtubeRefreshTokenAncientCiv: tokens.refreshToken,
+          youtubeTokenExpiresAtAncientCiv: tokens.expiresAt,
           youtubeChannelNameAncientCiv: info.name,
           youtubeChannelPicAncientCiv: info.pictureUrl,
         }));
@@ -251,6 +255,17 @@ export default function Settings() {
               placeholder="xxxx.apps.googleusercontent.com"
               secret
             />
+            <Field
+              label="Google OAuth Client Secret"
+              value={form.youtubeClientSecret}
+              onChange={(v) => update('youtubeClientSecret', v)}
+              placeholder="GOCSPX-..."
+              secret
+            />
+            <p className="text-xs text-gray-500">
+              The client secret is used once during setup to obtain a permanent refresh token. It is
+              stored in your private Supabase account and never sent anywhere except Google's servers.
+            </p>
 
             {/* Space channel */}
             <div className="flex flex-col gap-3 rounded-lg border border-violet-500/20 bg-violet-500/5 p-4">

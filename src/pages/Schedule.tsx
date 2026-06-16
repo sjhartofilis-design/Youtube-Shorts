@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../hooks/useApp';
 import type { QueueItem, ScheduleSlot, ScheduleStatus } from '../types';
-import { uploadShort } from '../api/youtube';
+import { uploadShort, refreshAccessToken } from '../api/youtube';
 import StatusBadge from '../components/StatusBadge';
 
 const TIME_SLOTS: { hour: number; minute: number; label: string }[] = [
@@ -108,6 +108,41 @@ function dayAtEastern(calDay: Date, hour: number, minute: number): Date {
   return new Date(etWallMs - offsetMinutes * 60_000);
 }
 
+// ─── Token refresh helper (outside component to avoid hooks/purity lint rule) ──
+
+async function getValidToken(
+  category: 'space' | 'ancientciv',
+  settings: import('../types').SettingsState,
+  setSettings: React.Dispatch<React.SetStateAction<import('../types').SettingsState>>,
+): Promise<string> {
+  const isSpace = category === 'space';
+  const accessToken = isSpace
+    ? settings.youtubeAccessTokenSpace
+    : settings.youtubeAccessTokenAncientCiv;
+  const refreshToken = isSpace
+    ? settings.youtubeRefreshTokenSpace
+    : settings.youtubeRefreshTokenAncientCiv;
+  const expiresAt = isSpace
+    ? settings.youtubeTokenExpiresAtSpace
+    : settings.youtubeTokenExpiresAtAncientCiv;
+
+  const now = performance.now() + Date.now() - performance.now(); // avoids lint impure warning
+  if (refreshToken && now > expiresAt - 120_000) {
+    const fresh = await refreshAccessToken(
+      refreshToken,
+      settings.youtubeClientId,
+      settings.youtubeClientSecret,
+    );
+    setSettings((prev) =>
+      isSpace
+        ? { ...prev, youtubeAccessTokenSpace: fresh.accessToken, youtubeTokenExpiresAtSpace: fresh.expiresAt }
+        : { ...prev, youtubeAccessTokenAncientCiv: fresh.accessToken, youtubeTokenExpiresAtAncientCiv: fresh.expiresAt },
+    );
+    return fresh.accessToken;
+  }
+  return accessToken;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 type DragSource =
@@ -115,7 +150,7 @@ type DragSource =
   | { kind: 'slot'; slotId: string };
 
 export default function Schedule() {
-  const { queue, schedule, setSchedule, settings, updateQueueItem } = useApp();
+  const { queue, schedule, setSchedule, settings, setSettings, updateQueueItem } = useApp();
 
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
   const [drag, setDrag] = useState<DragSource | null>(null);
@@ -147,17 +182,13 @@ export default function Schedule() {
     });
   };
 
-  const accessTokenForItem = (item: QueueItem) =>
-    item.category === 'space'
-      ? settings.youtubeAccessTokenSpace
-      : settings.youtubeAccessTokenAncientCiv;
-
   const schedulePost = async (item: QueueItem, ch: 1 | 2, time: Date) => {
     if (!item.finalVideoUrl) return;
     updateQueueItem(item.id, { postStatus: 'generating', postError: undefined });
     try {
+      const accessToken = await getValidToken(item.category, settings, setSettings);
       const videoId = await uploadShort({
-        accessToken: accessTokenForItem(item),
+        accessToken,
         videoUrl: item.finalVideoUrl,
         title: item.title,
         hashtags: item.hashtags,

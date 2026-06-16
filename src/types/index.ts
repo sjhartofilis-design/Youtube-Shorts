@@ -72,10 +72,15 @@ export interface SettingsState {
   pexelsApiKey: string;
   elevenLabsApiKey: string;
   youtubeClientId: string;
+  youtubeClientSecret: string;
   youtubeAccessTokenSpace: string;
+  youtubeRefreshTokenSpace: string;
+  youtubeTokenExpiresAtSpace: number; // ms timestamp
   youtubeChannelNameSpace: string;
   youtubeChannelPicSpace: string;
   youtubeAccessTokenAncientCiv: string;
+  youtubeRefreshTokenAncientCiv: string;
+  youtubeTokenExpiresAtAncientCiv: number; // ms timestamp
   youtubeChannelNameAncientCiv: string;
   youtubeChannelPicAncientCiv: string;
   channel1Name: string;
