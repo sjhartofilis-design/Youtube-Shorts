@@ -1,3 +1,28 @@
+const CHANNELS_URL =
+  'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true';
+
+export interface ChannelInfo {
+  name: string;
+  pictureUrl: string;
+}
+
+export async function getChannelInfo(accessToken: string): Promise<ChannelInfo> {
+  const res = await fetch(CHANNELS_URL, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`YouTube channel fetch error (${res.status}): ${body}`);
+  }
+  const data = await res.json();
+  const snippet = data?.items?.[0]?.snippet;
+  if (!snippet) throw new Error('No YouTube channel found for this account.');
+  return {
+    name: snippet.title as string,
+    pictureUrl: (snippet.thumbnails?.default?.url ?? '') as string,
+  };
+}
+
 const UPLOAD_URL =
   'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status';
 

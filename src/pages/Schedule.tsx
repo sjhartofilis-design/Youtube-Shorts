@@ -12,10 +12,10 @@ const TIME_SLOTS: { hour: number; minute: number; label: string }[] = [
   { hour: 21, minute: 0, label: '9:00 PM' },
 ];
 
-const STATUS_COLORS: Record<ScheduleStatus, string> = {
-  scheduled: 'bg-violet-500',
-  posted: 'bg-green-500',
-  failed: 'bg-red-500',
+// Channel 1 = Space (violet), Channel 2 = Ancient Civ (amber)
+const CHANNEL_COLORS: Record<1 | 2, { dot: string; border: string; bg: string; text: string }> = {
+  1: { dot: 'bg-violet-500', border: 'border-violet-500/30', bg: 'bg-violet-500/10', text: 'text-violet-300' },
+  2: { dot: 'bg-amber-500', border: 'border-amber-500/30', bg: 'bg-amber-500/10', text: 'text-amber-300' },
 };
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -147,12 +147,17 @@ export default function Schedule() {
     });
   };
 
+  const accessTokenForItem = (item: QueueItem) =>
+    item.category === 'space'
+      ? settings.youtubeAccessTokenSpace
+      : settings.youtubeAccessTokenAncientCiv;
+
   const schedulePost = async (item: QueueItem, ch: 1 | 2, time: Date) => {
     if (!item.finalVideoUrl) return;
     updateQueueItem(item.id, { postStatus: 'generating', postError: undefined });
     try {
       const videoId = await uploadShort({
-        accessToken: settings.youtubeAccessToken,
+        accessToken: accessTokenForItem(item),
         videoUrl: item.finalVideoUrl,
         title: item.title,
         hashtags: item.hashtags,
@@ -279,9 +284,13 @@ export default function Schedule() {
         </button>
       </div>
 
-      {!settings.youtubeAccessToken && (
+      {(!settings.youtubeAccessTokenSpace || !settings.youtubeAccessTokenAncientCiv) && (
         <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-400">
-          Connect your YouTube account in Settings before scheduling posts.
+          {!settings.youtubeAccessTokenSpace && !settings.youtubeAccessTokenAncientCiv
+            ? 'Connect both YouTube channels in Settings before scheduling posts.'
+            : !settings.youtubeAccessTokenSpace
+              ? 'Space channel not connected — go to Settings to connect it.'
+              : 'Ancient Civ channel not connected — go to Settings to connect it.'}
         </div>
       )}
 
@@ -319,10 +328,14 @@ export default function Schedule() {
       </div>
 
       {/* Legend */}
-      <div className="mb-3 flex gap-4 text-xs text-gray-400">
+      <div className="mb-3 flex flex-wrap gap-4 text-xs text-gray-400">
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-violet-500" /> Scheduled
+          <span className="h-2.5 w-2.5 rounded-full bg-violet-500" /> Space
         </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Ancient Civ
+        </span>
+        <span className="mx-1 text-gray-600">|</span>
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-green-500" /> Posted
         </span>
@@ -423,6 +436,13 @@ export default function Schedule() {
                           {/* Filled slots */}
                           {slots.map((s) => {
                             const status = deriveStatus(s.queueItemId);
+                            const chColors = CHANNEL_COLORS[s.channel];
+                            const statusColor =
+                              status === 'posted'
+                                ? 'bg-green-500'
+                                : status === 'failed'
+                                  ? 'bg-red-500'
+                                  : chColors.dot;
                             return (
                               <div
                                 key={s.id}
@@ -432,13 +452,13 @@ export default function Schedule() {
                                   setDrag({ kind: 'slot', slotId: s.id });
                                 }}
                                 onDragEnd={() => setDrag(null)}
-                                className="mb-1 flex cursor-move items-start gap-1.5 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 select-none"
+                                className={`mb-1 flex cursor-move items-start gap-1.5 rounded-md border px-2 py-1 select-none ${chColors.border} ${chColors.bg}`}
                               >
                                 <span
-                                  className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${STATUS_COLORS[status]}`}
+                                  className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${statusColor}`}
                                 />
                                 <div className="min-w-0">
-                                  <p className="truncate text-[11px] font-medium text-gray-200 leading-tight">
+                                  <p className={`truncate text-[11px] font-medium leading-tight ${chColors.text}`}>
                                     {s.title}
                                   </p>
                                   <p className="text-[10px] text-gray-500 leading-tight capitalize">

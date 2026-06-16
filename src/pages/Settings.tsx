@@ -1,6 +1,6 @@
 import { useState, type ChangeEvent } from 'react';
 import { useApp } from '../hooks/useApp';
-import { startGoogleOAuth } from '../api/youtube';
+import { startGoogleOAuth, getChannelInfo } from '../api/youtube';
 import { assetPaths, uploadUserAsset } from '../api/supabase';
 import { VOICE_STYLE_OPTIONS, type VoiceStyle } from '../types';
 
@@ -14,8 +14,10 @@ export default function Settings() {
   const { userId, settings, setSettings, clearSavedData, changePassword } = useApp();
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
-  const [oauthError, setOauthError] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const [oauthErrorSpace, setOauthErrorSpace] = useState<string | null>(null);
+  const [connectingSpace, setConnectingSpace] = useState(false);
+  const [oauthErrorAncientCiv, setOauthErrorAncientCiv] = useState<string | null>(null);
+  const [connectingAncientCiv, setConnectingAncientCiv] = useState(false);
   const [dataCleared, setDataCleared] = useState(false);
   const [clearingData, setClearingData] = useState(false);
   const [uploadingAudio, setUploadingAudio] = useState(false);
@@ -53,14 +55,32 @@ export default function Settings() {
     }
   };
 
-  const handleConnectYouTube = async () => {
-    setOauthError(null);
+  const handleConnectYouTube = async (channel: 'space' | 'ancientciv') => {
+    const setError = channel === 'space' ? setOauthErrorSpace : setOauthErrorAncientCiv;
+    const setConnecting = channel === 'space' ? setConnectingSpace : setConnectingAncientCiv;
+    setError(null);
     setConnecting(true);
     try {
       const token = await startGoogleOAuth(form.youtubeClientId);
-      update('youtubeAccessToken', token);
+      const info = await getChannelInfo(token);
+      if (channel === 'space') {
+        setForm((prev) => ({
+          ...prev,
+          youtubeAccessTokenSpace: token,
+          youtubeChannelNameSpace: info.name,
+          youtubeChannelPicSpace: info.pictureUrl,
+        }));
+      } else {
+        setForm((prev) => ({
+          ...prev,
+          youtubeAccessTokenAncientCiv: token,
+          youtubeChannelNameAncientCiv: info.name,
+          youtubeChannelPicAncientCiv: info.pictureUrl,
+        }));
+      }
+      setSaved(false);
     } catch (err) {
-      setOauthError(err instanceof Error ? err.message : 'Failed to connect to YouTube');
+      setError(err instanceof Error ? err.message : 'Failed to connect to YouTube');
     } finally {
       setConnecting(false);
     }
@@ -223,7 +243,7 @@ export default function Settings() {
         {/* YouTube OAuth */}
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
           <h2 className="mb-4 text-base font-semibold text-white">YouTube Authorization</h2>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-6">
             <Field
               label="Google OAuth Client ID"
               value={form.youtubeClientId}
@@ -231,30 +251,78 @@ export default function Settings() {
               placeholder="xxxx.apps.googleusercontent.com"
               secret
             />
-            <Field
-              label="Google OAuth Client Secret"
-              value={form.youtubeClientSecret}
-              onChange={(v) => update('youtubeClientSecret', v)}
-              placeholder="optional, not used in implicit flow"
-              secret
-            />
-            <button
-              onClick={handleConnectYouTube}
-              disabled={connecting}
-              className="self-start rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-gray-200 disabled:opacity-50"
-            >
-              {connecting
-                ? 'Connecting…'
-                : form.youtubeAccessToken
-                  ? 'Reconnect with Google'
-                  : 'Connect with Google'}
-            </button>
-            {form.youtubeAccessToken && (
-              <p className="text-xs text-green-400">
-                Connected — access token: {maskKey(form.youtubeAccessToken)}
-              </p>
-            )}
-            {oauthError && <p className="text-xs text-red-400">{oauthError}</p>}
+
+            {/* Space channel */}
+            <div className="flex flex-col gap-3 rounded-lg border border-violet-500/20 bg-violet-500/5 p-4">
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-violet-500" />
+                <span className="text-sm font-semibold text-white">Space Channel</span>
+              </div>
+              {form.youtubeChannelNameSpace ? (
+                <div className="flex items-center gap-3">
+                  {form.youtubeChannelPicSpace && (
+                    <img
+                      src={form.youtubeChannelPicSpace}
+                      alt={form.youtubeChannelNameSpace}
+                      className="h-8 w-8 rounded-full"
+                    />
+                  )}
+                  <div>
+                    <p className="text-sm text-gray-200">{form.youtubeChannelNameSpace}</p>
+                    <p className="text-xs text-green-400">Connected ✓</p>
+                  </div>
+                </div>
+              ) : null}
+              <button
+                onClick={() => handleConnectYouTube('space')}
+                disabled={connectingSpace || !form.youtubeClientId}
+                className="self-start rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-gray-200 disabled:opacity-50"
+              >
+                {connectingSpace
+                  ? 'Connecting…'
+                  : form.youtubeAccessTokenSpace
+                    ? 'Reconnect Space Channel'
+                    : 'Connect Space Channel'}
+              </button>
+              {oauthErrorSpace && <p className="text-xs text-red-400">{oauthErrorSpace}</p>}
+            </div>
+
+            {/* Ancient Civ channel */}
+            <div className="flex flex-col gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                <span className="text-sm font-semibold text-white">Ancient Civ Channel</span>
+              </div>
+              {form.youtubeChannelNameAncientCiv ? (
+                <div className="flex items-center gap-3">
+                  {form.youtubeChannelPicAncientCiv && (
+                    <img
+                      src={form.youtubeChannelPicAncientCiv}
+                      alt={form.youtubeChannelNameAncientCiv}
+                      className="h-8 w-8 rounded-full"
+                    />
+                  )}
+                  <div>
+                    <p className="text-sm text-gray-200">{form.youtubeChannelNameAncientCiv}</p>
+                    <p className="text-xs text-green-400">Connected ✓</p>
+                  </div>
+                </div>
+              ) : null}
+              <button
+                onClick={() => handleConnectYouTube('ancientciv')}
+                disabled={connectingAncientCiv || !form.youtubeClientId}
+                className="self-start rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-gray-200 disabled:opacity-50"
+              >
+                {connectingAncientCiv
+                  ? 'Connecting…'
+                  : form.youtubeAccessTokenAncientCiv
+                    ? 'Reconnect Ancient Civ Channel'
+                    : 'Connect Ancient Civ Channel'}
+              </button>
+              {oauthErrorAncientCiv && (
+                <p className="text-xs text-red-400">{oauthErrorAncientCiv}</p>
+              )}
+            </div>
           </div>
         </section>
 
@@ -330,7 +398,8 @@ export default function Settings() {
               <li>Anthropic: {maskKey(form.anthropicApiKey) || '—'}</li>
               <li>Pexels: {maskKey(form.pexelsApiKey) || '—'}</li>
               <li>ElevenLabs: {maskKey(form.elevenLabsApiKey) || '—'}</li>
-              <li>YouTube Access Token: {maskKey(form.youtubeAccessToken) || '—'}</li>
+              <li>YouTube (Space): {maskKey(form.youtubeAccessTokenSpace) || '—'}</li>
+              <li>YouTube (Ancient Civ): {maskKey(form.youtubeAccessTokenAncientCiv) || '—'}</li>
             </ul>
           </section>
         )}

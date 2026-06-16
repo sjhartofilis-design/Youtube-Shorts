@@ -72,8 +72,12 @@ export interface SettingsState {
   pexelsApiKey: string;
   elevenLabsApiKey: string;
   youtubeClientId: string;
-  youtubeClientSecret: string;
-  youtubeAccessToken: string;
+  youtubeAccessTokenSpace: string;
+  youtubeChannelNameSpace: string;
+  youtubeChannelPicSpace: string;
+  youtubeAccessTokenAncientCiv: string;
+  youtubeChannelNameAncientCiv: string;
+  youtubeChannelPicAncientCiv: string;
   channel1Name: string;
   channel2Name: string;
   voiceStyleSpace: VoiceStyle;
